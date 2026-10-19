@@ -1,4 +1,5 @@
 import {
+	type MarkdownPostProcessorContext,
 	MarkdownView,
 	Menu,
 	Notice,
@@ -17,7 +18,7 @@ import {
 	type EnclaveScope,
 	SelfCheckError,
 } from "./crypto";
-import { buildLockedNote, FENCE_LANGS, isLocked, parseLockedNote, readScope } from "./format";
+import { buildLockedNote, FENCE_LANG, isLocked, parseLockedNote, readScope } from "./format";
 import { ConfirmModal } from "./ConfirmModal";
 import { PasswordModal, type PasswordPromptOptions } from "./PasswordModal";
 import { DEFAULT_SETTINGS, type EnclaveSettings, EnclaveSettingTab } from "./settings";
@@ -101,15 +102,10 @@ export default class EnclavePlugin extends Plugin {
 			await this.toggleActiveNote();
 		});
 
-		// Render the encrypted payload block as a compact placeholder in reading view
-		// instead of a wall of base64. Legacy Locky/Lockbox blocks render the same way.
-		const renderPlaceholder = (_source: string, el: HTMLElement) => {
-			el.createDiv({
-				cls: "enclave-blob",
-				text: "🔒 Locked note — unlock with Enclave to view its contents.",
-			});
-		};
-		for (const lang of FENCE_LANGS) this.registerMarkdownCodeBlockProcessor(lang, renderPlaceholder);
+		// Render the encrypted payload block as an "unlock" card instead of a wall of base64.
+		this.registerMarkdownCodeBlockProcessor(FENCE_LANG, (source, el, ctx) =>
+			this.renderLockedCard(source, el, ctx)
+		);
 
 		this.statusBarEl = this.addStatusBarItem();
 		this.statusBarEl.addClass("enclave-status");
@@ -268,15 +264,9 @@ export default class EnclavePlugin extends Plugin {
 	// ---- settings & persistence ----------------------------------------
 
 	async loadSettings(): Promise<void> {
-		const raw = (await this.loadData()) as Partial<PersistedData> | EnclaveSettings | null;
-		if (raw && typeof raw === "object" && "settings" in raw && raw.settings) {
-			this.settings = Object.assign({}, DEFAULT_SETTINGS, raw.settings);
-			this.startupLedger = normalizeLedger((raw as PersistedData).ledger);
-		} else {
-			// Back-compat: older data stored the settings object flat.
-			this.settings = Object.assign({}, DEFAULT_SETTINGS, (raw as EnclaveSettings) ?? {});
-			this.startupLedger = [];
-		}
+		const raw = (await this.loadData()) as Partial<PersistedData> | null;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, raw?.settings);
+		this.startupLedger = normalizeLedger(raw?.ledger);
 	}
 
 	async saveSettings(): Promise<void> {
@@ -381,6 +371,29 @@ export default class EnclavePlugin extends Plugin {
 				.setIcon("unlock")
 				.onClick(() => this.permanentlyDecryptFiles(files, desc))
 		);
+	}
+
+	/** The card a locked note shows in reading view and live preview. */
+	private renderLockedCard(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext): void {
+		let scope: EnclaveScope = "vault";
+		try {
+			if ((JSON.parse(source) as Partial<EnclavePayload>).scope === "note") scope = "note";
+		} catch {
+			/* malformed payload; unlocking will report it */
+		}
+
+		const card = el.createDiv({ cls: "enclave-card" });
+		setIcon(card.createDiv({ cls: "enclave-card-icon" }), "lock");
+		card.createDiv({ cls: "enclave-card-title", text: "This note is locked" });
+		card.createDiv({
+			cls: "enclave-card-desc",
+			text: scope === "note" ? "Encrypted with a separate password" : "Encrypted with the vault password",
+		});
+		const button = card.createEl("button", { cls: "mod-cta", text: "Unlock" });
+		button.addEventListener("click", () => {
+			const file = this.app.vault.getAbstractFileByPath(ctx.sourcePath);
+			if (file instanceof TFile) void this.unlockNote(file);
+		});
 	}
 
 	private async toggleActiveNote(): Promise<void> {
@@ -1363,14 +1376,12 @@ export default class EnclavePlugin extends Plugin {
 	}
 }
 
-/** Parse a persisted ledger, tolerating the legacy string-array format (scope unknown -> vault). */
+/** Parse a persisted ledger, dropping malformed entries. */
 function normalizeLedger(raw: unknown): LedgerEntry[] {
 	if (!Array.isArray(raw)) return [];
 	const out: LedgerEntry[] = [];
 	for (const e of raw) {
-		if (typeof e === "string") {
-			out.push({ path: e, scope: "vault" });
-		} else if (e && typeof e === "object" && typeof (e as LedgerEntry).path === "string") {
+		if (e && typeof e === "object" && typeof (e as LedgerEntry).path === "string") {
 			const scope: EnclaveScope = (e as LedgerEntry).scope === "note" ? "note" : "vault";
 			out.push({ path: (e as LedgerEntry).path, scope });
 		}

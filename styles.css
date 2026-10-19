@@ -78,21 +78,40 @@
 	cursor: pointer;
 }
 
-/* Style the encrypted-note callout (type "lock"). */
-.callout[data-callout="lock"] {
-	--callout-color: 180, 140, 40;
-	--callout-icon: lucide-lock;
+/* Card shown instead of the raw payload block of a locked note. */
+.enclave-card {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.35em;
+	padding: 1.5em 1em;
+	border-radius: var(--radius-m);
+	border: 1px solid var(--background-modifier-border);
+	background-color: var(--background-secondary);
+	text-align: center;
 }
 
-/* Reading-view placeholder shown instead of the raw base64 payload block. */
-.enclave-blob {
-	padding: 1em;
-	border-radius: var(--radius-m);
-	border: 1px dashed var(--background-modifier-border);
-	background-color: var(--background-secondary);
+.enclave-card-icon {
+	display: flex;
+	color: var(--text-muted);
+}
+
+.enclave-card-icon svg {
+	width: 28px;
+	height: 28px;
+}
+
+.enclave-card-title {
+	font-weight: var(--font-semibold);
+}
+
+.enclave-card-desc {
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
-	text-align: center;
+}
+
+.enclave-card button {
+	margin-top: 0.6em;
 }
 
 /* Ribbon icon tint when one or more notes are unlocked (visible on mobile). */

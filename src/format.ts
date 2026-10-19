@@ -4,9 +4,9 @@
  * A locked note remains a valid `.md` file so its title stays visible in the
  * file explorer and it continues to participate in links and the graph. The
  * original file contents (including any of the note's own frontmatter) are
- * encrypted wholesale and embedded in a fenced ```enclave block. A small
- * frontmatter marker plus a human-readable callout sit above it so the file
- * reads sensibly in preview mode and is easy to detect.
+ * encrypted wholesale and embedded in a fenced ```enclave block, with a small
+ * frontmatter marker above it so the note is easy to detect. In Obsidian the
+ * block renders as an "unlock" card (see renderLockedCard in main.ts).
  *
  * Layout:
  *
@@ -14,9 +14,6 @@
  *   locked: true
  *   lock-scope: vault
  *   ---
- *
- *   > [!lock]- Encrypted with Enclave
- *   > Run "Enclave: Unlock note" (or click the ribbon) to decrypt.
  *
  *   ```enclave
  *   {"v":1,...}
@@ -31,19 +28,16 @@
  *    anywhere a `---`/`---` pair happens to appear in the body, AND a parseable
  *    payload block. A plain note that happens to use a `locked` property is
  *    therefore never misdetected as encrypted.
- *  - Notes written by Locky (`locky`, `locky-scope`, ```locky) and Lockbox
- *    (`locker`, `locker-scope`, ```locker) are still detected and read. They are
- *    never written; such a note switches to this format the next time it is locked.
  */
 
 import type { EnclavePayload, EnclaveScope } from "./crypto";
 
-/** Fence languages recognized as a payload block. The first one is written. */
-export const FENCE_LANGS = ["enclave", "locky", "locker"] as const;
+/** Language of the fenced block that holds the encrypted payload. */
+export const FENCE_LANG = "enclave";
 
-const FENCE_RE = new RegExp("```(?:" + FENCE_LANGS.join("|") + ")[^\\n]*\\n([\\s\\S]*?)\\n```");
-const MARKER_RE = /^(?:locked|locky|locker):\s*true\s*$/m;
-const SCOPE_RE = /^(?:lock|locky|locker)-scope:\s*(vault|note)\s*$/m;
+const FENCE_RE = /```enclave[^\n]*\n([\s\S]*?)\n```/;
+const MARKER_RE = /^locked:\s*true\s*$/m;
+const SCOPE_RE = /^lock-scope:\s*(vault|note)\s*$/m;
 
 /** Collapse CRLF/CR line endings to LF for stable detection and parsing. */
 function normalize(content: string): string {
@@ -64,19 +58,14 @@ export function buildLockedNote(payload: EnclavePayload): string {
 		`lock-scope: ${payload.scope}`,
 		"---",
 		"",
-		"> [!lock]- 🔒 Encrypted with Enclave",
-		`> This note is locked${
-			payload.scope === "note" ? " with its own password" : ""
-		}. Run **Enclave: Unlock note** (or click the ribbon lock icon) to decrypt it.`,
-		"",
-		"```" + FENCE_LANGS[0],
+		"```" + FENCE_LANG,
 		json,
 		"```",
 		"",
 	].join("\n");
 }
 
-/** Returns true if the file content is an encrypted note (Enclave or legacy format). */
+/** Returns true if the file content is an Enclave-encrypted note. */
 export function isLocked(content: string): boolean {
 	const fm = leadingFrontmatter(content);
 	if (!fm || !MARKER_RE.test(fm)) return false;

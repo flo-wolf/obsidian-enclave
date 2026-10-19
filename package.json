@@ -1,11 +1,12 @@
 {
 	"name": "enclave",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Encrypt note contents at rest while keeping the title visible. Lock, unlock, or permanently decrypt notes with a vault-wide password or a per-note password.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"deploy": "npm run build && node scripts/deploy.mjs",
 		"test": "node --experimental-transform-types --import ./tests/register-mock.mjs --test tests/*.test.mjs",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
 	},

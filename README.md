@@ -125,10 +125,6 @@ locked: true
 lock-scope: vault
 ---
 
-> [!lock]- 🔒 Encrypted with Enclave
-> This note is locked. Run **Enclave: Unlock note** (or click the ribbon lock
-> icon) to decrypt it.
-
 ```enclave
 {"v":1,"alg":"AES-GCM","kdf":"PBKDF2","hash":"SHA-256","iterations":310000,"salt":"…","iv":"…","ct":"…","scope":"vault"}
 ```
@@ -137,6 +133,8 @@ lock-scope: vault
 - `locked` marks the note as encrypted. `lock-scope` says which password it
   needs: `vault` or `note` (separate).
 - `ct` holds the entire original note, properties included, encrypted.
+- In Obsidian, the block shows as a card saying the note is locked, with an
+  **Unlock** button.
 - Because it's still a plain text file, a locked note syncs, backs up and works
   with version control like any other note.
 
@@ -172,12 +170,6 @@ and offers **Secure notes left exposed** to encrypt them again.
 Permanently decrypting a note restores it as a normal note and removes it from
 Enclave's tracking. It will not be locked again unless you lock it yourself.
 
-### Notes from Locky and Lockbox
-
-Notes locked with [Locky](https://github.com/boinkdevteam/obsidian-locky) or
-[Lockbox](https://github.com/danzar/Obsidian-Locker) are recognized and can be
-unlocked. The next time you lock them, they are saved in Enclave's format.
-
 ## Settings
 
 | Setting | Default | |
@@ -194,8 +186,15 @@ unlocked. The next time you lock them, they are saved in Enclave's format.
 npm install      # install dependencies
 npm run dev      # rebuild main.js on every change
 npm run build    # type-check and build a production bundle
+npm run deploy   # build and copy the plugin into $OBSIDIAN_VAULT
 npm test         # run the test suite
 ```
+
+To try a change before releasing it, run
+`OBSIDIAN_VAULT=/path/to/vault npm run deploy`, then turn Enclave off and on
+again under Settings → Community plugins (or run **Reload app without saving**).
+This overwrites the copy BRAT installed; BRAT puts the released version back the
+next time it updates.
 
 To publish a release, set the version in `manifest.json`, `package.json` and
 `versions.json`, then push a tag with exactly that version (for example
