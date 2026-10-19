@@ -1,7 +1,7 @@
 name: Release Obsidian plugin
 
 # Push a tag matching the manifest version (e.g. `0.5.0`, no `v` prefix) to
-# build the plugin and create a draft GitHub release with main.js, manifest.json
+# build the plugin and publish a GitHub release with main.js, manifest.json
 # and styles.css attached — the exact assets the community store expects.
 on:
   push:

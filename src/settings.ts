@@ -15,7 +15,6 @@ export interface EnclaveSettings {
 	verifyOnLock: boolean;
 }
 
-
 export const DEFAULT_SETTINGS: EnclaveSettings = {
 	iterations: DEFAULT_ITERATIONS,
 	autoLockOnClose: true,

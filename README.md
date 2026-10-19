@@ -1,63 +1,123 @@
 # Enclave
 
-Encrypt a note's **contents** while keeping its **title visible**. Locked notes
-stay as ordinary `.md` files — they show up in the file explorer, graph, and
-links by name — but their body is sealed with authenticated encryption until you
-unlock or permanently decrypt them.
+**An Obsidian plugin that encrypts your notes and folders on disk.**
 
-Enclave is a fork of [Locky](https://github.com/boinkdevteam/obsidian-locky) by
-boinkdevteam, which is itself a fork of
-[Lockbox](https://github.com/danzar/Obsidian-Locker) by Danzar. Both are licensed
-under the GPL-3.0, as is Enclave.
+A locked note's contents are unreadable to anything outside Obsidian: sync
+services, backups, file browsers, other apps. Inside Obsidian you unlock it with
+a password, edit it as usual, and it locks itself again when you're done. Locked
+notes keep their names, so they still show up in the file explorer, in links and
+in the graph.
 
-## Features
+> [!WARNING]
+> There is no password recovery. If you forget a password, the notes locked with
+> it are gone. Keep a backup of anything you can't afford to lose.
 
-- 🔒 **Lock / unlock individual notes** via commands, the ribbon icon, or the
-  file context menu.
-- 🔓 **Permanent Decryption (Undo Initial Encryption)**:
-  - **Permanently decrypt a note** — completely removes encryption, writes plain markdown back to disk, and removes the note from auto-lock registry.
-  - **Permanently decrypt a group of notes** — right-click a folder or multi-select notes in File Explorer to permanently decrypt them in a batch.
-  - **Permanently decrypt the vault** — undoes encryption for all vault-password notes across the entire vault with a single command.
-- 🗝️ **Two key models:**
-  - **Vault password** — one password (cached in memory for the session)
-    unlocks every note locked with the vault default.
-  - **Per-note password** — lock a sensitive note with its own password.
-- 🧮 **Strong crypto** — PBKDF2 (SHA-256, 310k iterations by default) derives an
-  AES-GCM-256 key. Each note gets a fresh random salt and IV, and GCM
-  authentication means a wrong password fails cleanly instead of returning
-  garbage.
-- ⏱️ **Auto-lock** — re-encrypt a note when you navigate away, after an
-  inactivity timeout, and on Obsidian quit. The cached vault password expires
-  after a configurable interval.
-- ✅ **Encryption self-check** — before a note's plaintext is overwritten, the
-  freshly-made ciphertext is decrypted and compared to the original. If it
-  doesn't match, the lock is aborted and the note is left untouched, so a faulty
-  lock can never silently destroy content.
-- 🟡 **Status-bar indicator** — shows how many notes are currently unlocked
-  (i.e. have plaintext on disk). Click it to lock everything at once.
-- 💪 **Password-strength hint** — a meter on the lock dialog nudges you away
-  from trivial passwords.
-- 📄 **Plain `.md` storage** — the encrypted payload lives in a fenced
-  ` ```enclave ` block, so locked notes still sync, back up, and version like
-  any other note. Notes locked by Locky or Lockbox are still recognized and can
-  be unlocked; they switch to Enclave's format the next time they're locked.
+- [Installation](#installation)
+- [Usage](#usage)
+- [What is and isn't encrypted](#what-is-and-isnt-encrypted)
+- [How it works](#how-it-works)
+- [Settings](#settings)
+- [Development](#development)
+- [Credits and license](#credits-and-license)
 
 ## Installation
 
-Enclave is not listed in the Obsidian community directory.
+Enclave is not listed in the Obsidian community plugin directory. Install it in
+one of two ways.
 
-### BRAT
-Add this repository in the [BRAT](https://github.com/TfTHacker/obsidian42-brat)
-plugin. For a private repository, give BRAT a fine-grained GitHub token with
-read-only **Contents** access to this repository only.
+**With BRAT** (updates from GitHub releases)
 
-### Manual install
-Run `npm run build`, then copy `main.js`, `manifest.json`, and `styles.css` to
-`<your-vault>/.obsidian/plugins/enclave/` and enable **Enclave** under
-Settings → Community plugins. If your vault syncs (iCloud or Obsidian Sync with
-community plugins enabled), the plugin reaches your other devices the same way.
+1. Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) from the
+   community plugins.
+2. If this repository is private, create a
+   [fine-grained GitHub token](https://github.com/settings/tokens?type=beta)
+   with read-only **Contents** access to this repository only, and paste it into
+   BRAT's settings.
+3. In BRAT, add the repository `flo-wolf/obsidian-enclave`.
 
-## How a locked note looks on disk
+**Manually** (works with iCloud or Obsidian Sync)
+
+1. Run `npm install && npm run build`.
+2. Copy `main.js`, `manifest.json` and `styles.css` into
+   `<your-vault>/.obsidian/plugins/enclave/`.
+3. Enable **Enclave** under Settings → Community plugins.
+
+If your vault syncs through iCloud, or through Obsidian Sync with "Installed
+community plugins" turned on, the plugin reaches your other devices, including
+iOS, with the vault.
+
+## Usage
+
+### Two kinds of password
+
+- **Vault password**: one password for all your everyday locked notes. You
+  enter it once per session; it is kept in memory only and forgotten after 30
+  minutes (configurable) or when Obsidian quits.
+- **Separate password**: a password for one note, or one group of notes, that
+  should not open with the vault password.
+
+### Lock and unlock a note
+
+Right-click a note in the file explorer:
+
+| Menu item | What it does |
+|---|---|
+| **Enclave: lock note** | Encrypts the note with the vault password. |
+| **Enclave: lock with separate password** | Encrypts the note with a password of its own. |
+| **Enclave: unlock note** | Decrypts the note so you can read and edit it. It locks again when you leave it. |
+| **Enclave: permanently decrypt note** | Removes the encryption for good and turns it back into a normal note. |
+
+The lock icon in the left ribbon toggles the current note: it locks an unlocked
+note with the vault password, and unlocks a locked one.
+
+### Lock and unlock a folder or several notes
+
+Right-click a folder, or select several notes and right-click, for the same
+actions applied to every note inside, including subfolders. "Lock … with
+separate password" gives the whole group one shared password.
+
+When you unlock or decrypt a folder, Enclave asks for the vault password if any
+notes use it, then for a separate password if any notes use one. Every note that
+password opens is unlocked; notes locked with a different password stay locked
+and are listed in the summary. Cancel the separate-password prompt to skip them.
+
+### Commands
+
+All actions are also in the command palette:
+
+| Command | |
+|---|---|
+| Lock note (vault password) | Current note |
+| Lock note with a separate password | Current note |
+| Unlock note | Current note |
+| Permanently decrypt note (remove encryption) | Current note |
+| Lock all currently-unlocked notes | Re-locks everything you have open right now |
+| Lock every note in the vault (vault password) | Whole vault |
+| Unlock every locked note in the vault | Whole vault |
+| Permanently decrypt every locked note in the vault | Whole vault |
+| Forget vault password (lock session) | Clears the password from memory |
+| Secure notes left exposed (after a crash) | Only shown when needed, see [below](#while-a-note-is-unlocked) |
+
+The status bar shows how many notes are currently unlocked. Click it to lock
+them all.
+
+## What is and isn't encrypted
+
+| Encrypted | Not encrypted |
+|---|---|
+| The note's text | The note's file name |
+| The note's own properties (frontmatter) | Folder names |
+| | Attachments: images, PDFs and any other non-Markdown file |
+| | Notes while they are unlocked (see below) |
+
+Enclave only encrypts Markdown notes. Locking a folder does not touch the other
+files in it.
+
+## How it works
+
+### A locked note on disk
+
+Locking replaces the note's contents with this, in the same `.md` file:
 
 ````markdown
 ---
@@ -74,66 +134,79 @@ lock-scope: vault
 ```
 ````
 
-The note's *own* frontmatter and body are encrypted together inside `ct`, so
-nothing of the original content leaks — only the filename stays readable.
+- `locked` marks the note as encrypted. `lock-scope` says which password it
+  needs: `vault` or `note` (separate).
+- `ct` holds the entire original note, properties included, encrypted.
+- Because it's still a plain text file, a locked note syncs, backs up and works
+  with version control like any other note.
 
-## ⚠️ Security model — read this
+### Encryption
 
-This plugin gives you **encryption at rest while a note is locked.** Be aware of
-the tradeoffs of in-place editing:
+- A 256-bit AES-GCM key is derived from your password with PBKDF2 (SHA-256,
+  310,000 iterations by default).
+- Every note gets its own random salt and IV, so two notes with the same text
+  and password still look completely different.
+- AES-GCM is authenticated: a wrong password or a tampered file fails with an
+  error instead of producing garbage.
+- Before the plain text is overwritten, the encrypted result is decrypted and
+  compared to the original. If they differ, the lock is cancelled and the note
+  is left as it was.
+- Everything uses the Web Crypto API built into Obsidian, on desktop and mobile.
 
-- **While a note is unlocked, its plaintext is written to disk** so you can edit
-  it as a normal note. Auto-lock-on-close (on by default), the inactivity timer
-  (5 min default), and a best-effort lock on quit shrink this window. If the app
-  crashes or is force-quit while a note is unlocked, plaintext can remain on
-  disk — on the next launch Enclave detects this from a recovery ledger and
-  prompts you to run **Enclave: Secure notes left exposed**.
-- **Permanent decryption undoes encryption permanently**: when a note is permanently decrypted, it is restored as regular plain markdown on disk and will never be re-locked automatically.
-- **There is no password recovery.** Forget a password and the note is
-  unrecoverable. Keep backups of anything important.
-- The vault password is held in memory only and never persisted. It is cleared
-  on quit and after the "forget" timeout.
+### While a note is unlocked
 
-## Usage
+Unlocking writes the plain text back to the file so you can edit it normally.
+That means **an unlocked note is readable on disk and by your sync service**
+until it is locked again. Enclave keeps that window short:
 
-| Action | How |
-|--------|-----|
-| Lock the active note with the vault password | Command **Enclave: Lock note (vault password)** or the ribbon lock icon |
-| Lock with a separate password | Command **Enclave: Lock note with a separate password**, or file menu → **Enclave: lock with separate password** |
-| Unlock the active note (temporary) | Command **Enclave: Unlock note**, ribbon icon, or file menu |
-| **Permanently decrypt active note** | Command **Enclave: Permanently decrypt note (remove encryption)** or file menu |
-| Re-encrypt all unlocked notes now | Command **Enclave: Lock all currently-unlocked notes** |
-| Lock / unlock / permanently decrypt a folder | Right-click a folder → **Enclave: lock / unlock / permanently decrypt all notes in folder** |
-| Lock a folder or selection with one shared separate password | Right-click → **Enclave: lock all notes in folder with separate password** / **lock selected notes with separate password** |
-| Lock / unlock / permanently decrypt selected notes | Multi-select notes in File Explorer → Right-click → **Enclave: lock / unlock / permanently decrypt selected notes** |
-| **Permanently decrypt entire vault** | Command **Enclave: Permanently decrypt every locked note in the vault** |
-| Lock / unlock the entire vault | Commands **Enclave: Lock every note in the vault** / **Unlock every locked note in the vault** |
-| Clear the cached vault password | Command **Enclave: Forget vault password (lock session)** |
-| Re-secure notes left exposed by a crash | Command **Enclave: Secure notes left exposed** (only available when needed) |
+- It re-locks a note when you navigate away from it.
+- It re-locks notes that have been idle for 5 minutes (configurable).
+- It re-locks everything when Obsidian quits, or on mobile when the app goes to
+  the background.
 
-Bulk unlock and permanent decryption ask for the vault password if any vault
-notes are involved, then for one separate password if any separate-password notes
-are involved. That password is tried on each of them: notes locked together as a
-group open, and notes with a different password are reported and stay locked.
-Cancel the separate-password prompt to skip those notes.
+If Obsidian crashes while notes are unlocked, Enclave notices on the next start
+and offers **Secure notes left exposed** to encrypt them again.
+
+### Permanent decryption
+
+Permanently decrypting a note restores it as a normal note and removes it from
+Enclave's tracking. It will not be locked again unless you lock it yourself.
+
+### Notes from Locky and Lockbox
+
+Notes locked with [Locky](https://github.com/boinkdevteam/obsidian-locky) or
+[Lockbox](https://github.com/danzar/Obsidian-Locker) are recognized and can be
+unlocked. The next time you lock them, they are saved in Enclave's format.
 
 ## Settings
 
-- **Auto-lock on close** — re-encrypt an unlocked note when you navigate away (default on).
-- **Auto-lock after inactivity** — minutes before an idle unlocked note re-locks (`0` = off).
-- **Forget vault password after** — minutes the vault password stays cached (`0` = until quit).
-- **Key derivation iterations** — PBKDF2 iterations for newly locked notes.
-- **Verify before overwriting** — round-trip-check each lock before replacing the note (default on; roughly doubles lock time).
+| Setting | Default | |
+|---|---|---|
+| Auto-lock on close | On | Re-lock a note when you navigate away from it. |
+| Auto-lock after inactivity | 5 min | Re-lock idle unlocked notes. `0` turns it off. |
+| Forget vault password after | 30 min | How long the vault password stays in memory. `0` keeps it until Obsidian quits. |
+| Key derivation iterations | 310,000 | PBKDF2 iterations for newly locked notes. Higher is slower to unlock and slower to brute-force. |
+| Verify before overwriting | On | The round-trip check described above. Roughly doubles the time a lock takes. |
 
 ## Development
 
 ```bash
-npm install      # install deps
-npm run dev      # watch build -> main.js
-npm run build    # type-check + production bundle
-npm test         # run unit test suite
+npm install      # install dependencies
+npm run dev      # rebuild main.js on every change
+npm run build    # type-check and build a production bundle
+npm test         # run the test suite
 ```
 
-## License
+To publish a release, set the version in `manifest.json`, `package.json` and
+`versions.json`, then push a tag with exactly that version (for example
+`1.0.1`, no `v`). A GitHub Action builds the plugin and attaches `main.js`,
+`manifest.json` and `styles.css` to the release, which is what BRAT installs.
 
-GNU General Public License v3.0 (GPL-3.0-or-later) © 2025-2026. See [`LICENSE`](LICENSE).
+## Credits and license
+
+Enclave is a fork of [Locky](https://github.com/boinkdevteam/obsidian-locky) by
+boinkdevteam, which is itself a fork of
+[Lockbox](https://github.com/danzar/Obsidian-Locker) by Danzar.
+
+Licensed under the GNU General Public License v3.0 or later, like both projects
+it is based on. See [`LICENSE`](LICENSE).
