@@ -38,7 +38,7 @@ export class PasswordModal extends Modal {
 		if (this.options.description) {
 			contentEl.createEl("p", {
 				text: this.options.description,
-				cls: "locker-modal-desc",
+				cls: "enclave-modal-desc",
 			});
 		}
 
@@ -66,10 +66,10 @@ export class PasswordModal extends Modal {
 
 		// A strength hint is only useful while choosing a new password.
 		if (this.options.confirm) {
-			this.strengthEl = contentEl.createDiv({ cls: "locker-strength" });
-			const bar = this.strengthEl.createDiv({ cls: "locker-strength-track" });
-			bar.createDiv({ cls: "locker-strength-fill" });
-			this.strengthEl.createSpan({ cls: "locker-strength-label" });
+			this.strengthEl = contentEl.createDiv({ cls: "enclave-strength" });
+			const bar = this.strengthEl.createDiv({ cls: "enclave-strength-track" });
+			bar.createDiv({ cls: "enclave-strength-fill" });
+			this.strengthEl.createSpan({ cls: "enclave-strength-label" });
 			this.updateStrength("");
 		}
 
@@ -100,8 +100,8 @@ export class PasswordModal extends Modal {
 	private updateStrength(password: string): void {
 		if (!this.strengthEl) return;
 		const { score, label } = estimateStrength(password);
-		const fill = this.strengthEl.querySelector<HTMLElement>(".locker-strength-fill");
-		const text = this.strengthEl.querySelector<HTMLElement>(".locker-strength-label");
+		const fill = this.strengthEl.querySelector<HTMLElement>(".enclave-strength-fill");
+		const text = this.strengthEl.querySelector<HTMLElement>(".enclave-strength-label");
 		if (fill) {
 			fill.style.width = `${(score / 4) * 100}%`;
 			fill.dataset.score = String(score);
@@ -124,9 +124,9 @@ export class PasswordModal extends Modal {
 
 	private flash(message: string): void {
 		const { contentEl } = this;
-		let el = contentEl.querySelector<HTMLElement>(".locker-modal-error");
+		let el = contentEl.querySelector<HTMLElement>(".enclave-modal-error");
 		if (!el) {
-			el = contentEl.createEl("p", { cls: "locker-modal-error" });
+			el = contentEl.createEl("p", { cls: "enclave-modal-error" });
 		}
 		el.setText(message);
 	}

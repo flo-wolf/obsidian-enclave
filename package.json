@@ -1,8 +1,7 @@
 {
-	"name": "locky",
+	"name": "enclave",
 	"version": "1.0.0",
 	"description": "Encrypt note contents at rest while keeping the title visible. Lock, unlock, or permanently decrypt notes with a vault-wide password or a per-note password.",
-	"homepage": "https://community.obsidian.md/plugins/locky",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
@@ -17,7 +16,7 @@
 		"privacy",
 		"decrypt"
 	],
-	"author": "boinkdevteam",
+	"author": "Florian Wolf",
 	"license": "GPL-3.0-or-later",
 	"devDependencies": {
 		"@types/node": "^20.11.0",

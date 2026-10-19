@@ -1,5 +1,5 @@
 /*
- * Cryptography for Locky.
+ * Cryptography for Enclave.
  *
  * Uses the Web Crypto API (available in Obsidian's Electron runtime and on
  * mobile via Capacitor). Keys are derived from a password with PBKDF2 and
@@ -15,11 +15,10 @@ const SALT_BYTES = 16;
 const IV_BYTES = 12;
 const KEY_BITS = 256;
 
-export type LockerScope = "vault" | "note";
-export type LockyScope = LockerScope;
+export type EnclaveScope = "vault" | "note";
 
 /** Serializable payload stored inside the locked note. */
-export interface LockerPayload {
+export interface EnclavePayload {
 	/** Payload format version, for forward compatibility. */
 	v: number;
 	alg: "AES-GCM";
@@ -33,9 +32,8 @@ export interface LockerPayload {
 	/** base64-encoded ciphertext (includes the GCM auth tag) */
 	ct: string;
 	/** whether this note expects the vault password or its own password */
-	scope: LockerScope;
+	scope: EnclaveScope;
 }
-export type LockyPayload = LockerPayload;
 
 /** Thrown when decryption fails (wrong password or corrupted data). */
 export class DecryptError extends Error {
@@ -99,9 +97,9 @@ async function deriveKey(
 export async function encryptContent(
 	plaintext: string,
 	password: string,
-	scope: LockerScope,
+	scope: EnclaveScope,
 	iterations: number = DEFAULT_ITERATIONS
-): Promise<LockerPayload> {
+): Promise<EnclavePayload> {
 	const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
 	const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
 	const key = await deriveKey(password, salt, iterations);
@@ -132,9 +130,9 @@ export async function encryptContent(
 export async function encryptContentVerified(
 	plaintext: string,
 	password: string,
-	scope: LockerScope,
+	scope: EnclaveScope,
 	iterations: number = DEFAULT_ITERATIONS
-): Promise<LockerPayload> {
+): Promise<EnclavePayload> {
 	const payload = await encryptContent(plaintext, password, scope, iterations);
 	const roundTrip = await decryptContent(payload, password);
 	if (roundTrip !== plaintext) {
@@ -145,7 +143,7 @@ export async function encryptContentVerified(
 
 /** Decrypt a payload back to plaintext. Throws {@link DecryptError} on failure. */
 export async function decryptContent(
-	payload: LockerPayload,
+	payload: EnclavePayload,
 	password: string
 ): Promise<string> {
 	// Validate the self-described, unauthenticated parameters before doing any

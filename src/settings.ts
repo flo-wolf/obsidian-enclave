@@ -1,8 +1,8 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import { DEFAULT_ITERATIONS } from "./crypto";
-import type LockyPlugin from "./main";
+import type EnclavePlugin from "./main";
 
-export interface LockerSettings {
+export interface EnclaveSettings {
 	/** PBKDF2 iteration count used when locking new notes. */
 	iterations: number;
 	/** Re-encrypt an unlocked note automatically when you navigate away. */
@@ -15,9 +15,8 @@ export interface LockerSettings {
 	verifyOnLock: boolean;
 }
 
-export type LockySettings = LockerSettings;
 
-export const DEFAULT_SETTINGS: LockerSettings = {
+export const DEFAULT_SETTINGS: EnclaveSettings = {
 	iterations: DEFAULT_ITERATIONS,
 	autoLockOnClose: true,
 	// Non-zero by default so a note left open in a background pane (where the
@@ -27,8 +26,8 @@ export const DEFAULT_SETTINGS: LockerSettings = {
 	verifyOnLock: true,
 };
 
-export class LockySettingTab extends PluginSettingTab {
-	constructor(app: App, private plugin: LockyPlugin) {
+export class EnclaveSettingTab extends PluginSettingTab {
+	constructor(app: App, private plugin: EnclavePlugin) {
 		super(app, plugin);
 	}
 
@@ -123,15 +122,13 @@ export class LockySettingTab extends PluginSettingTab {
 				})
 			);
 
-		const warn = containerEl.createEl("div", { cls: "locker-settings-warning" });
+		const warn = containerEl.createEl("div", { cls: "enclave-settings-warning" });
 		warn.createEl("strong", { text: "Heads up: " });
 		warn.appendText(
 			"There is no password recovery. If you forget a password, the encrypted note cannot be decrypted. Keep backups of important notes. You can permanently decrypt a note or vault at any time with its password to permanently remove encryption."
 		);
 	}
 }
-
-export { LockySettingTab as LockerSettingTab };
 
 /**
  * Parse an integer within [min, max]. Returns null for empty/invalid/out-of-range
