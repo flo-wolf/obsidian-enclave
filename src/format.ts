@@ -14,7 +14,6 @@
  *   locked: true
  *   lock-scope: vault
  *   ---
- *
  *   ```enclave
  *   {"v":1,...}
  *   ```
@@ -57,7 +56,6 @@ export function buildLockedNote(payload: EnclavePayload): string {
 		"locked: true",
 		`lock-scope: ${payload.scope}`,
 		"---",
-		"",
 		"```" + FENCE_LANG,
 		json,
 		"```",

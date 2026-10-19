@@ -19,7 +19,7 @@ test("buildLockedNote generates valid frontmatter, callout, and enclave codebloc
 	assert.match(locked, /^---\n/);
 	assert.match(locked, /^locked: true$/m);
 	assert.match(locked, /^lock-scope: vault$/m);
-	assert.match(locked, /```enclave\n/);
+	assert.match(locked, /\n---\n```enclave\n/, "payload block follows the frontmatter with no blank line");
 	assert.doesNotMatch(locked, /\[!lock\]/);
 	assert.ok(isLocked(locked));
 	assert.equal(readScope(locked), "vault");

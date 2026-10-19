@@ -124,7 +124,6 @@ Locking replaces the note's contents with this, in the same `.md` file:
 locked: true
 lock-scope: vault
 ---
-
 ```enclave
 {"v":1,"alg":"AES-GCM","kdf":"PBKDF2","hash":"SHA-256","iterations":310000,"salt":"…","iv":"…","ct":"…","scope":"vault"}
 ```
