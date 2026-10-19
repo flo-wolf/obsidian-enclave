@@ -5,6 +5,9 @@ import { isLocked, buildLockedNote } from "../src/format.ts";
 import { encryptContent } from "../src/crypto.ts";
 import { TFile, TFolder } from "obsidian";
 
+// The plugin schedules its move-in prompt with window.setTimeout.
+globalThis.window ??= globalThis;
+
 class TestEnclavePlugin extends EnclavePlugin {
 	constructor(app) {
 		super(app, { id: "enclave", name: "Enclave" });
@@ -13,6 +16,7 @@ class TestEnclavePlugin extends EnclavePlugin {
 		/** When set, each password prompt takes the next entry instead of suppliedPassword. */
 		this.passwordQueue = null;
 		this.confirmResponse = true;
+		this.moveInPrompts = [];
 	}
 
 	async loadData() {
@@ -29,6 +33,11 @@ class TestEnclavePlugin extends EnclavePlugin {
 	}
 
 	confirmBulk() {
+		return Promise.resolve(this.confirmResponse);
+	}
+
+	confirmMoveIn(message) {
+		this.moveInPrompts.push(message);
 		return Promise.resolve(this.confirmResponse);
 	}
 
@@ -346,4 +355,117 @@ test("locking an unlocked separate-password note reuses its password instead of 
 	plugin.passwordQueue = [notePw];
 	await plugin.unlockNote(files.get("private.md"));
 	assert.equal(files.get("private.md").content, "Private note");
+});
+
+/** Move a mock file to a new path, as a vault rename would, and return it. */
+function moveFile(files, oldPath, newPath) {
+	const file = files.get(oldPath);
+	files.delete(oldPath);
+	file.path = newPath;
+	file.name = newPath.split("/").pop();
+	files.set(newPath, file);
+	return file;
+}
+
+async function waitFor(condition) {
+	for (let i = 0; i < 100 && !condition(); i++) await new Promise((r) => setTimeout(r, 20));
+}
+
+test("a plain note moved into a protected folder is locked after one prompt", async () => {
+	const { app, files } = createMockApp({ "inbox/idea.md": "An idea", "inbox/todo.md": "A todo" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.settings.protectedFolders = ["private"];
+	plugin.passwordQueue = ["vaultPassword123"];
+
+	plugin.onRename(moveFile(files, "inbox/idea.md", "private/idea.md"), "inbox/idea.md");
+	plugin.onRename(moveFile(files, "inbox/todo.md", "private/todo.md"), "inbox/todo.md");
+	await plugin.promptMovedIn();
+
+	assert.equal(plugin.moveInPrompts.length, 1);
+	assert.match(plugin.moveInPrompts[0], /2 notes were moved into "private"/);
+	assert.ok(isLocked(files.get("private/idea.md").content));
+	assert.ok(isLocked(files.get("private/todo.md").content));
+});
+
+test("declining the move-in prompt leaves the note as it is", async () => {
+	const { app, files } = createMockApp({ "inbox/idea.md": "An idea" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.protectedFolders = ["private"];
+	plugin.confirmResponse = false;
+
+	plugin.onRename(moveFile(files, "inbox/idea.md", "private/idea.md"), "inbox/idea.md");
+	await plugin.promptMovedIn();
+
+	assert.equal(plugin.moveInPrompts.length, 1);
+	assert.equal(files.get("private/idea.md").content, "An idea");
+});
+
+test("renaming a note inside a protected folder does not prompt", async () => {
+	const { app, files } = createMockApp({ "private/old.md": "Plain note" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.protectedFolders = ["private"];
+
+	plugin.onRename(moveFile(files, "private/old.md", "private/new.md"), "private/old.md");
+	await plugin.promptMovedIn();
+
+	assert.equal(plugin.moveInPrompts.length, 0);
+});
+
+test("renaming a protected folder keeps it protected without prompting for its notes", async () => {
+	const { app, files } = createMockApp({ "private/a.md": "Plain note", "private/sub/b.md": "Plain note" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.protectedFolders = ["private", "private/sub"];
+
+	plugin.onRename(new TFolder("vault-private"), "private");
+	plugin.onRename(moveFile(files, "private/a.md", "vault-private/a.md"), "private/a.md");
+	plugin.onRename(moveFile(files, "private/sub/b.md", "vault-private/sub/b.md"), "private/sub/b.md");
+	await plugin.promptMovedIn();
+
+	assert.deepEqual(plugin.settings.protectedFolders, ["vault-private", "vault-private/sub"]);
+	assert.equal(plugin.moveInPrompts.length, 0);
+});
+
+test("moving an unprotected folder into a protected one asks about its notes", async () => {
+	const { app, files } = createMockApp({ "drafts/a.md": "Draft A", "drafts/b.md": "Draft B" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.protectedFolders = ["private"];
+	plugin.confirmResponse = false;
+
+	plugin.onRename(new TFolder("private/drafts"), "drafts");
+	plugin.onRename(moveFile(files, "drafts/a.md", "private/drafts/a.md"), "drafts/a.md");
+	plugin.onRename(moveFile(files, "drafts/b.md", "private/drafts/b.md"), "drafts/b.md");
+	await plugin.promptMovedIn();
+
+	assert.deepEqual(plugin.settings.protectedFolders, ["private"]);
+	assert.equal(plugin.moveInPrompts.length, 1);
+	assert.match(plugin.moveInPrompts[0], /2 notes were moved/);
+});
+
+test("a note created in a protected folder is locked when you leave it", async () => {
+	const { app, files } = createMockApp({ "private/new.md": "Fresh note" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.settings.protectedFolders = ["private"];
+	plugin.passwordQueue = ["vaultPassword123"];
+
+	plugin.onCreate(files.get("private/new.md"));
+	plugin.lastActiveFile = "private/new.md";
+	plugin.handleActiveChange(); // the mock workspace reports no active file: the note was left
+
+	await waitFor(() => isLocked(files.get("private/new.md").content));
+	assert.ok(isLocked(files.get("private/new.md").content));
+	assert.match(files.get("private/new.md").content, /^lock-scope: vault$/m);
+});
+
+test("a permanently decrypted note in a protected folder is not locked again when left", async () => {
+	const { app, files } = createMockApp({ "private/kept-plain.md": "Decrypted on purpose" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.protectedFolders = ["private"];
+
+	plugin.lastActiveFile = "private/kept-plain.md";
+	plugin.handleActiveChange();
+	await new Promise((r) => setTimeout(r, 50));
+
+	assert.equal(files.get("private/kept-plain.md").content, "Decrypted on purpose");
 });

@@ -13,6 +13,8 @@ export interface EnclaveSettings {
 	forgetPasswordMinutes: number;
 	/** Verify each note decrypts back to the original before overwriting it. */
 	verifyOnLock: boolean;
+	/** Folders kept locked: notes moved or created inside are locked with the vault password. */
+	protectedFolders: string[];
 }
 
 export const DEFAULT_SETTINGS: EnclaveSettings = {
@@ -23,6 +25,7 @@ export const DEFAULT_SETTINGS: EnclaveSettings = {
 	autoLockMinutes: 5,
 	forgetPasswordMinutes: 30,
 	verifyOnLock: true,
+	protectedFolders: [],
 };
 
 export class EnclaveSettingTab extends PluginSettingTab {
@@ -120,6 +123,27 @@ export class EnclaveSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				})
 			);
+
+		new Setting(containerEl)
+			.setName("Protected folders")
+			.setDesc(
+				"Folders that stay locked. A note moved into one asks to be locked with the vault password; a note created in one is locked when you leave it. Add a folder by right-clicking it → Enclave: keep folder locked."
+			)
+			.setHeading();
+		if (this.plugin.settings.protectedFolders.length === 0) {
+			containerEl.createEl("p", { cls: "setting-item-description", text: "No protected folders." });
+		}
+		for (const path of this.plugin.settings.protectedFolders) {
+			new Setting(containerEl).setName(path).addExtraButton((button) =>
+				button
+					.setIcon("x")
+					.setTooltip("Stop keeping this folder locked")
+					.onClick(async () => {
+						await this.plugin.unprotectFolder(path);
+						this.display();
+					})
+			);
+		}
 
 		const warn = containerEl.createEl("div", { cls: "enclave-settings-warning" });
 		warn.createEl("strong", { text: "Heads up: " });

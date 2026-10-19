@@ -25,6 +25,9 @@ import { DEFAULT_SETTINGS, type EnclaveSettings, EnclaveSettingTab } from "./set
 
 const SWEEP_INTERVAL_MS = 30 * 1000;
 
+/** How long to gather notes moved into protected folders before asking once about all of them. */
+const MOVE_BATCH_MS = 500;
+
 /** Tracks a note that is currently decrypted on disk so it can be re-locked. */
 interface UnlockedNote {
 	password: string;
@@ -89,6 +92,20 @@ export default class EnclavePlugin extends Plugin {
 	private ribbonEl: HTMLElement | null = null;
 	private lastActiveFile: string | null = null;
 
+	/** Notes created in a protected folder this session, locked the first time they're left. */
+	private newInProtected = new Set<string>();
+
+	/** Notes moved into a protected folder, waiting for the batched "lock them?" prompt. */
+	private movedIn = new Set<string>();
+	private movedInTimer: number | null = null;
+
+	/**
+	 * Protected folders as they were before the latest folder rename in this batch.
+	 * Rename events for the notes inside a renamed protected folder carry old paths
+	 * from before the rename, so they are checked against this list too.
+	 */
+	private protectedBeforeRename: string[] = [];
+
 	/** Ledger read at startup, and notes found still exposed (plaintext) after a crash. */
 	private startupLedger: LedgerEntry[] = [];
 	private exposed: { file: TFile; scope: EnclaveScope }[] = [];
@@ -124,6 +141,8 @@ export default class EnclavePlugin extends Plugin {
 		this.app.workspace.onLayoutReady(() => {
 			this.lastActiveFile = this.app.workspace.getActiveFile()?.path ?? null;
 			void this.recoverExposedNotes();
+			// Registered after layout-ready: Obsidian fires "create" for every file while loading the vault.
+			this.registerEvent(this.app.vault.on("create", (file) => this.onCreate(file)));
 		});
 	}
 
@@ -220,20 +239,12 @@ export default class EnclavePlugin extends Plugin {
 		this.registerEvent(this.app.workspace.on("file-open", () => this.handleActiveChange()));
 		this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.handleActiveChange()));
 
-		// Keep the unlocked-map keys (which are file paths) in sync with the vault.
-		this.registerEvent(
-			this.app.vault.on("rename", (file: TAbstractFile, oldPath: string) => {
-				const info = this.unlocked.get(oldPath);
-				if (info) {
-					this.unlocked.delete(oldPath);
-					this.unlocked.set(file.path, info);
-					void this.persist();
-				}
-				if (this.lastActiveFile === oldPath) this.lastActiveFile = file.path;
-			})
-		);
+		this.registerEvent(this.app.vault.on("rename", (file, oldPath) => this.onRename(file, oldPath)));
 		this.registerEvent(
 			this.app.vault.on("delete", (file: TAbstractFile) => {
+				this.newInProtected.delete(file.path);
+				this.movedIn.delete(file.path);
+				if (file instanceof TFolder) void this.forgetProtectedUnder(file.path);
 				if (this.unlocked.delete(file.path)) {
 					void this.persist();
 					this.updateStatusBar();
@@ -318,6 +329,15 @@ export default class EnclavePlugin extends Plugin {
 	}
 
 	private addFolderMenuItems(menu: Menu, folder: TFolder): void {
+		if (!folder.isRoot()) {
+			const isProtected = this.settings.protectedFolders.includes(folder.path);
+			menu.addItem((item) =>
+				item
+					.setTitle(isProtected ? "Enclave: stop keeping folder locked" : "Enclave: keep folder locked")
+					.setIcon(isProtected ? "shield-off" : "shield")
+					.onClick(() => (isProtected ? this.unprotectFolder(folder.path) : this.protectFolder(folder)))
+			);
+		}
 		if (this.notesInFolder(folder).length === 0) return; // nothing to act on
 		menu.addItem((item) =>
 			item
@@ -785,9 +805,15 @@ export default class EnclavePlugin extends Plugin {
 
 	/**
 	 * Lock every currently-unlocked note in a list of files, either with the vault
-	 * password or with one separate password shared by all of them.
+	 * password or with one separate password shared by all of them. `confirm: false`
+	 * skips the bulk confirmation for callers that already asked.
 	 */
-	async lockFiles(files: TFile[], targetDescription: string, scope: EnclaveScope = "vault"): Promise<void> {
+	async lockFiles(
+		files: TFile[],
+		targetDescription: string,
+		scope: EnclaveScope = "vault",
+		confirm = true
+	): Promise<void> {
 		const work: { file: TFile; content: string }[] = [];
 		for (const file of files) {
 			try {
@@ -801,7 +827,7 @@ export default class EnclavePlugin extends Plugin {
 			new Notice("Enclave: no unlocked notes to lock here.");
 			return;
 		}
-		if (!(await this.confirmBulk("encrypt", work.length, targetDescription))) return;
+		if (confirm && !(await this.confirmBulk("encrypt", work.length, targetDescription))) return;
 
 		const password =
 			scope === "note"
@@ -1335,6 +1361,134 @@ export default class EnclavePlugin extends Plugin {
 		if (!silent) new Notice("Enclave: forgot the cached vault password.");
 	}
 
+	// ---- protected folders ----------------------------------------------
+
+	/** The protected folder `path` lies in, checked against `folders` (default: current settings). */
+	private protectedFolderOf(path: string, folders = this.settings.protectedFolders): string | null {
+		return folders.find((f) => path.startsWith(f + "/")) ?? null;
+	}
+
+	/** Remember `folder` as kept locked, then offer to lock the notes already inside. */
+	async protectFolder(folder: TFolder): Promise<void> {
+		if (!this.settings.protectedFolders.includes(folder.path)) {
+			this.settings = { ...this.settings, protectedFolders: [...this.settings.protectedFolders, folder.path] };
+			await this.persist();
+		}
+		new Notice(`Enclave: "${folder.path}" is now kept locked.`);
+		const unlockedNotes: TFile[] = [];
+		for (const file of this.notesInFolder(folder)) {
+			if (!isLocked(await this.readLiveContent(file))) unlockedNotes.push(file);
+		}
+		if (unlockedNotes.length > 0) await this.lockFiles(unlockedNotes, this.describeFolder(folder));
+	}
+
+	/** Stop keeping a folder locked. Its notes stay as they are. */
+	async unprotectFolder(path: string): Promise<void> {
+		if (!this.settings.protectedFolders.includes(path)) return;
+		this.settings = {
+			...this.settings,
+			protectedFolders: this.settings.protectedFolders.filter((f) => f !== path),
+		};
+		await this.persist();
+		new Notice(`Enclave: "${path}" is no longer kept locked.`);
+	}
+
+	/** Drop a deleted folder and its subfolders from the protected list. */
+	private async forgetProtectedUnder(path: string): Promise<void> {
+		const kept = this.settings.protectedFolders.filter((f) => f !== path && !f.startsWith(path + "/"));
+		if (kept.length === this.settings.protectedFolders.length) return;
+		this.settings = { ...this.settings, protectedFolders: kept };
+		await this.persist();
+	}
+
+	/** Lock a note created in a protected folder, unless it's already encrypted (e.g. synced in). */
+	private async lockNewNote(file: TFile): Promise<void> {
+		if (!this.protectedFolderOf(file.path)) return;
+		if (isLocked(await this.readLiveContent(file))) return;
+		await this.lockNote(file, "vault");
+	}
+
+	private onCreate(file: TAbstractFile): void {
+		if (file instanceof TFile && file.extension === "md" && this.protectedFolderOf(file.path)) {
+			this.newInProtected.add(file.path);
+		}
+	}
+
+	private onRename(file: TAbstractFile, oldPath: string): void {
+		// Keep path-keyed state in sync with the vault.
+		const info = this.unlocked.get(oldPath);
+		if (info) {
+			this.unlocked.delete(oldPath);
+			this.unlocked.set(file.path, info);
+			void this.persist();
+		}
+		if (this.lastActiveFile === oldPath) this.lastActiveFile = file.path;
+		if (this.newInProtected.delete(oldPath)) this.newInProtected.add(file.path);
+		if (this.movedIn.delete(oldPath)) this.movedIn.add(file.path);
+
+		if (file instanceof TFolder) {
+			this.followFolderRename(oldPath, file.path);
+			return;
+		}
+		if (!(file instanceof TFile) || file.extension !== "md") return;
+
+		const wasProtected =
+			this.protectedFolderOf(oldPath) !== null ||
+			this.protectedFolderOf(oldPath, this.protectedBeforeRename) !== null;
+		if (this.protectedFolderOf(file.path) && !wasProtected && !this.unlocked.has(file.path)) {
+			this.movedIn.add(file.path);
+			this.scheduleMovedInPrompt();
+		}
+	}
+
+	/** A renamed or moved folder takes its own and its subfolders' protection along. */
+	private followFolderRename(oldPath: string, newPath: string): void {
+		const before = this.settings.protectedFolders;
+		const after = before.map((f) =>
+			f === oldPath ? newPath : f.startsWith(oldPath + "/") ? newPath + f.slice(oldPath.length) : f
+		);
+		if (after.every((f, i) => f === before[i])) return;
+		this.protectedBeforeRename = before;
+		this.settings = { ...this.settings, protectedFolders: after };
+		void this.persist();
+		this.scheduleMovedInPrompt();
+	}
+
+	private scheduleMovedInPrompt(): void {
+		if (this.movedInTimer !== null) window.clearTimeout(this.movedInTimer);
+		this.movedInTimer = window.setTimeout(() => void this.promptMovedIn(), MOVE_BATCH_MS);
+	}
+
+	/** Ask once whether to lock every unencrypted note moved into a protected folder. */
+	private async promptMovedIn(): Promise<void> {
+		this.movedInTimer = null;
+		this.protectedBeforeRename = [];
+		const paths = Array.from(this.movedIn);
+		this.movedIn.clear();
+
+		const files: TFile[] = [];
+		for (const path of paths) {
+			const file = this.app.vault.getAbstractFileByPath(path);
+			if (!(file instanceof TFile) || this.unlocked.has(path) || !this.protectedFolderOf(path)) continue;
+			if (!isLocked(await this.readLiveContent(file))) files.push(file);
+		}
+		if (files.length === 0) return;
+
+		const folders = Array.from(new Set(files.map((f) => this.protectedFolderOf(f.path))));
+		const where = folders.length === 1 ? `"${folders[0]}", which is kept locked` : "folders that are kept locked";
+		const message =
+			files.length === 1
+				? `"${files[0].basename}" was moved into ${where}. Lock it with the vault password?`
+				: `${files.length} notes were moved into ${where}. Lock them with the vault password?`;
+		if (!(await this.confirmMoveIn(message))) return;
+		await this.lockFiles(files, `${files.length} moved note(s)`, "vault", false);
+	}
+
+	/** Confirmation for locking notes moved into a protected folder. Overridable for tests. */
+	protected confirmMoveIn(message: string): Promise<boolean> {
+		return new ConfirmModal(this.app, { title: "Enclave: lock moved notes?", message, cta: "Lock" }).open();
+	}
+
 	// ---- events & timers ------------------------------------------------
 
 	private handleActiveChange(): void {
@@ -1342,12 +1496,16 @@ export default class EnclavePlugin extends Plugin {
 		const previous = this.lastActiveFile;
 		this.lastActiveFile = current;
 		if (!this.settings.autoLockOnClose || this.bulkActive) return;
-		if (previous && previous !== current && this.unlocked.has(previous)) {
-			// Don't re-lock a note that's still open in another pane/window — the
-			// inactivity sweep will catch it once it's genuinely idle.
-			const prevFile = this.app.vault.getAbstractFileByPath(previous);
-			if (prevFile instanceof TFile && this.findEditorViews(prevFile).length > 0) return;
+		if (!previous || previous === current) return;
+		// Don't lock a note that's still open in another pane/window — the
+		// inactivity sweep will catch it once it's genuinely idle.
+		const prevFile = this.app.vault.getAbstractFileByPath(previous);
+		if (prevFile instanceof TFile && this.findEditorViews(prevFile).length > 0) return;
+		if (this.unlocked.has(previous)) {
 			void this.relock(previous);
+		} else if (this.newInProtected.delete(previous) && prevFile instanceof TFile) {
+			// A note created in a protected folder is locked the first time it's left.
+			void this.lockNewNote(prevFile);
 		}
 	}
 

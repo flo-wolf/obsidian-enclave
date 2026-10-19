@@ -87,6 +87,26 @@ notes use it, then for a separate password if any notes use one. Every note that
 password opens is unlocked; notes locked with a different password stay locked
 and are listed in the summary. Cancel the separate-password prompt to skip them.
 
+Each note keeps its own password, so a folder can mix both kinds: lock one note
+with a separate password, then lock the folder, and the folder lock leaves that
+note alone.
+
+### Keep a folder locked
+
+Locking a folder is a one-off: notes added to it later stay unencrypted. To keep
+a folder locked, right-click it → **Enclave: keep folder locked**. Enclave
+offers to lock the notes already inside, and from then on:
+
+- **A note moved into the folder** brings up a prompt to lock it with the vault
+  password. Moving several notes, or a whole folder, asks once for all of them.
+- **A note created in the folder** is locked with the vault password the first
+  time you leave it.
+- **Renaming or moving the folder** keeps it protected.
+- **Notes you permanently decrypt** inside the folder stay decrypted.
+
+To stop, right-click the folder → **Enclave: stop keeping folder locked**, or
+remove it under **Protected folders** in the settings. Its notes stay as they are.
+
 ### Commands
 
 All actions are also in the command palette:
@@ -118,7 +138,8 @@ locked.
 | | Notes while they are unlocked (see below) |
 
 Enclave only encrypts Markdown notes. Locking a folder does not touch the other
-files in it.
+files in it, and doesn't lock notes added to it later unless the folder is
+[kept locked](#keep-a-folder-locked).
 
 ## How it works
 
@@ -185,6 +206,7 @@ Enclave's tracking. It will not be locked again unless you lock it yourself.
 | Forget vault password after | 30 min | How long the vault password stays in memory. `0` keeps it until Obsidian quits. |
 | Key derivation iterations | 310,000 | PBKDF2 iterations for newly locked notes. Higher is slower to unlock and slower to brute-force. |
 | Verify before overwriting | On | The round-trip check described above. Roughly doubles the time a lock takes. |
+| Protected folders | None | Folders [kept locked](#keep-a-folder-locked). Remove one with its **×** button. |
 
 ## Development
 
