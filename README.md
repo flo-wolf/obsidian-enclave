@@ -76,36 +76,39 @@ it then locks them all again, each with its own password. When nothing is
 unlocked, it unlocks the current note if it's locked, or locks it with the vault
 password if it isn't.
 
-### Lock and unlock a folder or several notes
+### Lock a folder
 
-Right-click a folder, or select several notes and right-click, for the same
-actions applied to every note inside, including subfolders. "Lock … with
-separate password" gives the whole group one shared password.
+Right-click a folder → **Enclave: lock folder** (vault password) or **Enclave:
+lock folder with separate password** (one password for the whole folder). This
+locks every note in it, including subfolders, and keeps the folder locked:
 
-When you unlock or decrypt a folder, Enclave asks for the vault password if any
-notes use it, then for a separate password if any notes use one. Every note that
-password opens is unlocked; notes locked with a different password stay locked
-and are listed in the summary. Cancel the separate-password prompt to skip them.
+- **A note moved into the folder** brings up a prompt to lock it too. For a
+  vault-password folder you confirm; for a separate-password folder you enter
+  that folder's password, which Enclave checks against the notes already in it.
+  Moving several notes, or a whole folder, asks once.
+- **A note created in the folder** is locked the first time you leave it.
+- **Renaming or moving the folder** keeps it locked.
+- **Notes you permanently decrypt** inside the folder stay decrypted.
 
 Each note keeps its own password, so a folder can mix both kinds: lock one note
 with a separate password, then lock the folder, and the folder lock leaves that
 note alone.
 
-### Keep a folder locked
+**Unlocking a folder** (right-click → **Enclave: unlock all notes in folder**) is
+temporary, like unlocking a note: the folder stays locked and its notes lock
+again when you leave them. Enclave asks for the vault password if any notes use
+it, then for a separate password if any notes use one. Every note that password
+opens is unlocked; notes with a different password stay locked and are listed in
+the summary. Cancel the separate-password prompt to skip them.
 
-Locking a folder is a one-off: notes added to it later stay unencrypted. To keep
-a folder locked, right-click it → **Enclave: keep folder locked**. Enclave
-offers to lock the notes already inside, and from then on:
+**Permanently decrypting a folder** (right-click → **Enclave: permanently decrypt
+folder**) removes the encryption from its notes and stops keeping it locked.
 
-- **A note moved into the folder** brings up a prompt to lock it with the vault
-  password. Moving several notes, or a whole folder, asks once for all of them.
-- **A note created in the folder** is locked with the vault password the first
-  time you leave it.
-- **Renaming or moving the folder** keeps it protected.
-- **Notes you permanently decrypt** inside the folder stay decrypted.
+### Lock several notes
 
-To stop, right-click the folder → **Enclave: stop keeping folder locked**, or
-remove it under **Protected folders** in the settings. Its notes stay as they are.
+Select several notes, right-click, and choose **lock selected notes** or **lock
+selected notes with separate password** (one password for all of them). This
+locks just those notes; unlike a folder, nothing is kept locked afterwards.
 
 ### Commands
 
@@ -138,8 +141,7 @@ locked.
 | | Notes while they are unlocked (see below) |
 
 Enclave only encrypts Markdown notes. Locking a folder does not touch the other
-files in it, and doesn't lock notes added to it later unless the folder is
-[kept locked](#keep-a-folder-locked).
+files in it.
 
 ## How it works
 
@@ -206,7 +208,7 @@ Enclave's tracking. It will not be locked again unless you lock it yourself.
 | Forget vault password after | 30 min | How long the vault password stays in memory. `0` keeps it until Obsidian quits. |
 | Key derivation iterations | 310,000 | PBKDF2 iterations for newly locked notes. Higher is slower to unlock and slower to brute-force. |
 | Verify before overwriting | On | The round-trip check described above. Roughly doubles the time a lock takes. |
-| Protected folders | None | Folders [kept locked](#keep-a-folder-locked). Remove one with its **×** button. |
+| Locked folders | None | Folders you've [locked](#lock-a-folder), with their kind of password. The **×** button stops locking new notes there; its notes stay as they are. |
 
 ## Development
 

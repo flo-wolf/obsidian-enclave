@@ -1,6 +1,12 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
-import { DEFAULT_ITERATIONS } from "./crypto";
+import { DEFAULT_ITERATIONS, type EnclaveScope } from "./crypto";
 import type EnclavePlugin from "./main";
+
+/** A folder kept locked: notes moved or created in it are locked with its kind of password. */
+export interface ProtectedFolder {
+	path: string;
+	scope: EnclaveScope;
+}
 
 export interface EnclaveSettings {
 	/** PBKDF2 iteration count used when locking new notes. */
@@ -13,8 +19,8 @@ export interface EnclaveSettings {
 	forgetPasswordMinutes: number;
 	/** Verify each note decrypts back to the original before overwriting it. */
 	verifyOnLock: boolean;
-	/** Folders kept locked: notes moved or created inside are locked with the vault password. */
-	protectedFolders: string[];
+	/** Folders kept locked, set by locking a folder. */
+	protectedFolders: ProtectedFolder[];
 }
 
 export const DEFAULT_SETTINGS: EnclaveSettings = {
@@ -125,24 +131,30 @@ export class EnclaveSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Protected folders")
+			.setName("Locked folders")
 			.setDesc(
-				"Folders that stay locked. A note moved into one asks to be locked with the vault password; a note created in one is locked when you leave it. Add a folder by right-clicking it → Enclave: keep folder locked."
+				"Folders you've locked. A note moved into one is offered to be locked with the folder's password; a note created in one is locked when you leave it. Permanently decrypting a folder removes it from this list."
 			)
 			.setHeading();
 		if (this.plugin.settings.protectedFolders.length === 0) {
-			containerEl.createEl("p", { cls: "setting-item-description", text: "No protected folders." });
+			containerEl.createEl("p", {
+				cls: "setting-item-description",
+				text: "None yet. Right-click a folder → Enclave: lock folder.",
+			});
 		}
-		for (const path of this.plugin.settings.protectedFolders) {
-			new Setting(containerEl).setName(path).addExtraButton((button) =>
-				button
-					.setIcon("x")
-					.setTooltip("Stop keeping this folder locked")
-					.onClick(async () => {
-						await this.plugin.unprotectFolder(path);
-						this.display();
-					})
-			);
+		for (const folder of this.plugin.settings.protectedFolders) {
+			new Setting(containerEl)
+				.setName(folder.path)
+				.setDesc(folder.scope === "note" ? "Separate password" : "Vault password")
+				.addExtraButton((button) =>
+					button
+						.setIcon("x")
+						.setTooltip("Stop locking new notes in this folder. Its notes stay as they are.")
+						.onClick(async () => {
+							await this.plugin.unprotectFolder(folder.path);
+							this.display();
+						})
+				);
 		}
 
 		const warn = containerEl.createEl("div", { cls: "enclave-settings-warning" });

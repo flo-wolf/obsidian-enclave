@@ -1,6 +1,6 @@
 {
 	"name": "enclave",
-	"version": "1.0.4",
+	"version": "1.0.5",
 	"description": "Encrypt note contents at rest while keeping the title visible. Lock, unlock, or permanently decrypt notes with a vault-wide password or a per-note password.",
 	"main": "main.js",
 	"scripts": {
@@ -20,6 +20,8 @@
 	"author": "Florian Wolf",
 	"license": "GPL-3.0-or-later",
 	"devDependencies": {
+		"@codemirror/state": "6.5.0",
+		"@codemirror/view": "6.38.6",
 		"@types/node": "^20.11.0",
 		"esbuild": "0.20.0",
 		"obsidian": "latest",

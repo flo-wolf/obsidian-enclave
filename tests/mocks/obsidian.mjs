@@ -13,6 +13,7 @@ export class Plugin {
 		};
 	}
 	registerMarkdownCodeBlockProcessor() {}
+	registerEditorExtension() {}
 	addStatusBarItem() {
 		return {
 			addClass: () => {},
@@ -120,3 +121,8 @@ export class PluginSettingTab {
 		this.plugin = plugin;
 	}
 }
+
+// Editor state fields Obsidian adds to every Markdown editor. Never present in
+// test editor states, so lookups with `require: false` return undefined.
+export const editorInfoField = {};
+export const editorLivePreviewField = {};
