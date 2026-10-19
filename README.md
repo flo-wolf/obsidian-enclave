@@ -71,8 +71,10 @@ Right-click a note in the file explorer:
 | **Enclave: unlock note** | Decrypts the note so you can read and edit it. It locks again when you leave it. |
 | **Enclave: permanently decrypt note** | Removes the encryption for good and turns it back into a normal note. |
 
-The lock icon in the left ribbon toggles the current note: it locks an unlocked
-note with the vault password, and unlocks a locked one.
+The lock icon in the left ribbon turns orange while any note is unlocked; clicking
+it then locks them all again, each with its own password. When nothing is
+unlocked, it unlocks the current note if it's locked, or locks it with the vault
+password if it isn't.
 
 ### Lock and unlock a folder or several notes
 
@@ -102,8 +104,9 @@ All actions are also in the command palette:
 | Forget vault password (lock session) | Clears the password from memory |
 | Secure notes left exposed (after a crash) | Only shown when needed, see [below](#while-a-note-is-unlocked) |
 
-The status bar shows how many notes are currently unlocked. Click it to lock
-them all.
+While notes are unlocked, the status bar shows how many (for example
+"1 unlocked"). Click it to lock them all. It disappears once everything is
+locked.
 
 ## What is and isn't encrypted
 

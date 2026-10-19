@@ -60,22 +60,18 @@
 	color: var(--text-muted);
 }
 
-/* Status bar indicator. */
+/* Status bar indicator, only shown while notes are unlocked. */
 .enclave-status {
-	cursor: default;
+	cursor: pointer;
 	display: inline-flex;
 	align-items: center;
 	gap: 0.35em;
+	color: var(--text-warning, #d9a441);
 }
 
 .enclave-status-icon {
 	display: inline-flex;
 	align-items: center;
-}
-
-.enclave-status-warn {
-	color: var(--text-warning, #d9a441);
-	cursor: pointer;
 }
 
 /* Card shown instead of the raw payload block of a locked note. */

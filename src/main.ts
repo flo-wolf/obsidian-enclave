@@ -397,6 +397,12 @@ export default class EnclavePlugin extends Plugin {
 	}
 
 	private async toggleActiveNote(): Promise<void> {
+		// While anything is unlocked the ribbon is a "lock everything" button: each
+		// note goes back under its own password, so no vault password is needed.
+		if (this.unlocked.size > 0) {
+			await this.lockAll();
+			return;
+		}
 		const file = this.app.workspace.getActiveFile();
 		if (!file) {
 			new Notice("Enclave: open a note first.");
@@ -492,6 +498,15 @@ export default class EnclavePlugin extends Plugin {
 	// ---- lock / unlock / permanent decrypt -----------------------------
 
 	async lockNote(file: TFile, scope: EnclaveScope): Promise<void> {
+		// A note unlocked this session is re-locked with the password it was unlocked
+		// with. Only an explicit "separate password" lock of a vault note re-keys it.
+		const info = this.unlocked.get(file.path);
+		if (info && (scope === "vault" || info.scope === scope)) {
+			await this.relock(file.path);
+			if (isLocked(await this.readLiveContent(file))) new Notice(`Enclave: locked "${file.basename}".`);
+			return;
+		}
+
 		const ran = await this.withFileLock(file.path, async () => {
 			if (isLocked(await this.readLiveContent(file))) {
 				new Notice("Enclave: that note is already locked.");
@@ -1173,25 +1188,21 @@ export default class EnclavePlugin extends Plugin {
 			this.ribbonEl.setAttribute(
 				"aria-label",
 				count > 0
-					? `Enclave: ${count} note(s) unlocked — tap to lock the current note`
+					? `Enclave: ${count} note(s) unlocked — click to lock all`
 					: "Enclave: toggle lock on current note"
 			);
 		}
 
 		if (!this.statusBarEl) return;
+		// Only shown while plaintext is on disk; otherwise there is nothing to report.
+		this.statusBarEl.toggle(count > 0);
+		if (count === 0) return;
 		this.statusBarEl.empty();
-		const icon = this.statusBarEl.createSpan({ cls: "enclave-status-icon" });
-		setIcon(icon, count > 0 ? "unlock" : "lock");
-		this.statusBarEl.createSpan({
-			cls: "enclave-status-text",
-			text: count > 0 ? `${count} unlocked` : "Locked",
-		});
-		this.statusBarEl.toggleClass("enclave-status-warn", count > 0);
+		setIcon(this.statusBarEl.createSpan({ cls: "enclave-status-icon" }), "unlock");
+		this.statusBarEl.createSpan({ cls: "enclave-status-text", text: `${count} unlocked` });
 		this.statusBarEl.setAttribute(
 			"aria-label",
-			count > 0
-				? `Enclave: ${count} note(s) unlocked (plaintext on disk) — click to lock all`
-				: "Enclave: no notes are unlocked"
+			`Enclave: ${count} note(s) unlocked (plaintext on disk) — click to lock all`
 		);
 	}
 

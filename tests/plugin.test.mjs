@@ -3,26 +3,7 @@ import assert from "node:assert/strict";
 import EnclavePlugin from "../src/main.ts";
 import { isLocked, buildLockedNote } from "../src/format.ts";
 import { encryptContent } from "../src/crypto.ts";
-
-class MockFile {
-	constructor(path, content) {
-		this.path = path;
-		this.name = path.split("/").pop();
-		this.basename = this.name.replace(/\.[^/.]+$/, "");
-		this.extension = "md";
-		this.content = content;
-	}
-}
-
-class MockFolder {
-	constructor(path) {
-		this.path = path;
-		this.name = path.split("/").pop() || "/";
-	}
-	isRoot() {
-		return this.path === "" || this.path === "/";
-	}
-}
+import { TFile, TFolder } from "obsidian";
 
 class TestEnclavePlugin extends EnclavePlugin {
 	constructor(app) {
@@ -68,7 +49,7 @@ class TestEnclavePlugin extends EnclavePlugin {
 function createMockApp(filesMap) {
 	const files = new Map();
 	for (const [path, content] of Object.entries(filesMap)) {
-		files.set(path, new MockFile(path, content));
+		files.set(path, new TFile(path, content));
 	}
 
 	const app = {
@@ -87,7 +68,7 @@ function createMockApp(filesMap) {
 			},
 			getMarkdownFiles: () => Array.from(files.values()),
 			getAbstractFileByPath: (path) => files.get(path) ?? null,
-			getRoot: () => new MockFolder("/"),
+			getRoot: () => new TFolder("/"),
 			on: () => ({}),
 		},
 		workspace: {
@@ -259,13 +240,13 @@ test("lockFiles with a separate password locks a group that unlockFiles opens wi
 	plugin.settings.iterations = 100000;
 	plugin.suppliedPassword = "groupSecret123";
 
-	await plugin.lockFolder(new MockFolder("private"), "note");
+	await plugin.lockFolder(new TFolder("private"), "note");
 	for (const f of [files.get("private/a.md"), files.get("private/b.md")]) {
 		assert.ok(isLocked(f.content));
 		assert.match(f.content, /^lock-scope: note$/m);
 	}
 
-	await plugin.unlockFolder(new MockFolder("private"));
+	await plugin.unlockFolder(new TFolder("private"));
 	assert.equal(files.get("private/a.md").content, "Note A");
 	assert.equal(files.get("private/b.md").content, "Note B");
 	assert.equal(plugin.getUnlockedMap().get("private/a.md").scope, "note");
@@ -341,4 +322,28 @@ test("cancelling the vault password prompt changes nothing", async () => {
 	assert.ok(isLocked(files.get("v.md").content));
 	assert.ok(isLocked(files.get("s.md").content));
 	assert.equal(plugin.getUnlockedMap().size, 0);
+});
+
+test("locking an unlocked separate-password note reuses its password instead of asking for the vault password", async () => {
+	const notePw = "noteSecret123";
+	const { app, files } = createMockApp({
+		"private.md": buildLockedNote(await encryptContent("Private note", notePw, "note", 100000)),
+	});
+	const plugin = new TestEnclavePlugin(app);
+	plugin.passwordQueue = [notePw];
+
+	await plugin.unlockNote(files.get("private.md"));
+	assert.equal(files.get("private.md").content, "Private note");
+
+	// No more passwords: any prompt now returns null and would leave the note unlocked.
+	await plugin.lockNote(files.get("private.md"), "vault");
+
+	const content = files.get("private.md").content;
+	assert.ok(isLocked(content));
+	assert.match(content, /^lock-scope: note$/m);
+	assert.equal(plugin.getUnlockedMap().size, 0);
+
+	plugin.passwordQueue = [notePw];
+	await plugin.unlockNote(files.get("private.md"));
+	assert.equal(files.get("private.md").content, "Private note");
 });
