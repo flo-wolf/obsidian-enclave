@@ -18,7 +18,10 @@
 			"ES6",
 			"ES7",
 			"ES2018"
-		]
+		],
+		// No Node.js type definitions: the plugin runs in Obsidian, not Node (and
+		// @types/node would quietly allow newer JavaScript than the libs above).
+		"types": []
 	},
 	"include": [
 		"src/**/*.ts"

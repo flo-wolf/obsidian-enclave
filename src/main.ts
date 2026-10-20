@@ -1943,10 +1943,11 @@ export default class EnclavePlugin extends Plugin {
 	/** Keep the list of intentionally plain notes in step with renames (`to` null: deleted). */
 	private movePlainNotes(from: string, to: string | null): void {
 		const before = this.settings.plainNotes;
-		const after = before.flatMap((p) => {
-			if (p !== from && !p.startsWith(from + "/")) return [p];
-			return to === null ? [] : [to + p.slice(from.length)];
-		});
+		const after: string[] = [];
+		for (const p of before) {
+			if (p !== from && !p.startsWith(from + "/")) after.push(p);
+			else if (to !== null) after.push(to + p.slice(from.length));
+		}
 		if (after.length === before.length && after.every((p, i) => p === before[i])) return;
 		this.settings = { ...this.settings, plainNotes: after };
 		void this.persist();
