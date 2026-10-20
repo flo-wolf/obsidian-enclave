@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { findPayloadBlock, lockedNoteReadOnly } from "../src/editor.ts";
 import { buildLockedNote } from "../src/format.ts";
 
@@ -62,4 +63,20 @@ test("lockedNoteReadOnly lets programmatic changes and unlocked notes through", 
 	// Once it's plain text, typing works.
 	const typed = unlocked.update({ changes: { from: unlocked.doc.length, insert: "!" }, userEvent: "input.type" }).state;
 	assert.equal(typed.doc.toString(), "Plain text!");
+});
+
+test("lockedNoteReadOnly makes only a locked note's text non-editable", () => {
+	const extensions = [lockedNoteReadOnly(() => {})];
+	const editable = (doc) =>
+		!EditorState.create({ doc, extensions })
+			.facet(EditorView.contentAttributes)
+			.some((attrs) => attrs.contenteditable === "false");
+
+	assert.equal(editable(buildLockedNote(payload)), false);
+	assert.equal(editable("---\ntags: [a]\n---\nPlain note"), true);
+
+	// The attribute follows the document: unlocking makes the note editable again.
+	const locked = EditorState.create({ doc: buildLockedNote(payload), extensions });
+	const unlocked = locked.update({ changes: { from: 0, to: locked.doc.length, insert: "Plain text" } }).state;
+	assert.equal(unlocked.facet(EditorView.contentAttributes).some((a) => a.contenteditable === "false"), false);
 });

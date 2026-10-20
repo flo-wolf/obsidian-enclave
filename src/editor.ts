@@ -8,7 +8,8 @@
  * can't enter it and the card is always what you see. Source mode is left
  * alone, so the raw block is still visible there.
  *
- * lockedNoteReadOnly keeps the user from typing into a locked note, in either mode.
+ * lockedNoteReadOnly makes a locked note's text non-editable, in either mode, so
+ * it shows no cursor and takes no typing.
  */
 
 import { EditorState, Prec, StateField } from "@codemirror/state";
@@ -113,16 +114,25 @@ export function lockedCardExtension(render: CardRenderer) {
 const EDIT_EVENTS = ["input", "delete", "move", "undo", "redo"];
 
 /**
- * Editor extension that refuses edits the user makes to a locked note, so nothing
+ * Editor extension that keeps the user from editing a locked note, so nothing
  * gets typed into the encrypted file (where unlocking would silently drop it).
+ *
+ * The text is marked non-editable while the note is locked, so it takes no
+ * cursor, focus or keyboard (on mobile, tapping it doesn't open the keyboard).
+ * A change filter backs that up for user edits that arrive another way.
  * Changes without a user event, such as Enclave unlocking the note or Obsidian
  * reloading it after a sync, still go through.
  */
 export function lockedNoteReadOnly(onBlocked: () => void) {
-	return EditorState.changeFilter.of((tr) => {
-		if (!tr.docChanged || !EDIT_EVENTS.some((event) => tr.isUserEvent(event))) return true;
-		if (!findPayloadBlock(tr.startState)) return true;
-		onBlocked();
-		return false;
-	});
+	return [
+		EditorView.contentAttributes.compute(["doc"], (state): Record<string, string> =>
+			findPayloadBlock(state) ? { contenteditable: "false" } : {}
+		),
+		EditorState.changeFilter.of((tr) => {
+			if (!tr.docChanged || !EDIT_EVENTS.some((event) => tr.isUserEvent(event))) return true;
+			if (!findPayloadBlock(tr.startState)) return true;
+			onBlocked();
+			return false;
+		}),
+	];
 }
