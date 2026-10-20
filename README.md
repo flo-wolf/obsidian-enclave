@@ -29,25 +29,25 @@ in the graph.
 
 Enclave needs Obsidian 1.13 or later.
 
-Enclave is not listed in the Obsidian community plugin directory. Install it in
-one of two ways.
+**From the community plugins** (recommended)
 
-**With BRAT** (updates from GitHub releases)
+1. In Obsidian, open **Settings → Community plugins** and select **Browse**.
+2. Search for **Enclave**, then select **Install** and **Enable**.
+
+Or open [Enclave in the Obsidian community directory](https://community.obsidian.md/plugins/enclave).
+
+**With BRAT** (new versions before they reach the directory)
 
 1. Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) from the
    community plugins.
-2. If this repository is private, create a
-   [fine-grained GitHub token](https://github.com/settings/tokens?type=beta)
-   with read-only **Contents** access to this repository only, and paste it into
-   BRAT's settings.
-3. In BRAT, add the repository `flo-wolf/obsidian-enclave`.
+2. In BRAT, add the repository `flo-wolf/obsidian-enclave`.
 
-**Manually** (works with iCloud or Obsidian Sync)
+**Manually**
 
-1. Run `npm install && npm run build`.
-2. Copy `main.js`, `manifest.json` and `styles.css` into
-   `<your-vault>/.obsidian/plugins/enclave/`.
-3. Enable **Enclave** under Settings → Community plugins.
+1. Download `main.js`, `manifest.json` and `styles.css` from the
+   [latest release](https://github.com/flo-wolf/obsidian-enclave/releases/latest).
+2. Copy them into `<your-vault>/.obsidian/plugins/enclave/`.
+3. Enable **Enclave** under **Settings → Community plugins**.
 
 If your vault syncs through iCloud, or through Obsidian Sync with "Installed
 community plugins" turned on, the plugin reaches your other devices, including
