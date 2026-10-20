@@ -236,6 +236,25 @@ it's re-encrypted with the new one, so old notes move over as you use them.
 Permanently decrypting a note restores it as a normal note and removes it from
 Enclave's tracking. It will not be locked again unless you lock it yourself.
 
+### Syncing with other plugins
+
+While a note is unlocked, its plain text is on disk, so a sync tool could upload it. Enclave offers
+sync plugins a small interface at `app.plugins.getPlugin("enclave").api` (see
+[`src/api.ts`](src/api.ts)) to prevent that:
+
+- **`holdReason(path)`** says whether a note must not be uploaded right now: it's unlocked, a crash
+  left it unlocked, or it's waiting to be locked in a locked folder.
+- **`isIntentionallyPlain(path)`** says whether you made a note plain on purpose (permanently
+  decrypted it, or chose not to lock it when you moved it into a locked folder).
+- **`lockAll()`** and **`onLocked()`** let a sync plugin lock everything before syncing, or sync a
+  note as soon as it's locked.
+- **`openForMerge()`** lets a sync plugin merge conflicting versions of a locked note: Enclave
+  decrypts them in memory only, asks for any password it doesn't have, and encrypts the result
+  again. The sync plugin never sees a password.
+
+When you lock a note without having changed it, Enclave writes back its exact earlier encrypted
+version, so sync tools see no change and two devices can't conflict over it.
+
 ## Settings
 
 Settings are stored in the vault and sync with it. Phones and tablets can have
