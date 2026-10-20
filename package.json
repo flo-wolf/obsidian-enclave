@@ -1,7 +1,7 @@
 {
 	"name": "enclave",
 	"version": "1.1.0",
-	"description": "Encrypt note contents at rest while keeping the title visible. Lock, unlock, or permanently decrypt notes with a vault-wide password or a per-note password.",
+	"description": "Encrypt notes and whole folders with a vault password or their own password. Locked notes keep their names and links, lock again automatically, and can be decrypted for good at any time.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
