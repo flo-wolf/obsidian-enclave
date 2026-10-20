@@ -291,8 +291,8 @@ export default class EnclavePlugin extends Plugin {
 
 		this.addCommand({
 			id: "forget-vault-password",
-			name: "Forget remembered passwords",
-			callback: () => this.forgetAllPasswords(),
+			name: "Lock all notes and forget passwords",
+			callback: () => void this.lockAndForget(),
 		});
 		this.addCommand({
 			id: "secure-exposed",
@@ -1655,26 +1655,40 @@ export default class EnclavePlugin extends Plugin {
 
 	/** Which passwords are in memory on this device, as a description for the settings tab. */
 	rememberedPasswordsSummary(): string {
-		const vault = this.vaultPassword !== null;
 		const separate = this.separatePasswords.size;
-		if (!vault && separate === 0) return "No passwords are in memory on this device right now.";
+		const unlocked = this.unlocked.size;
 		const parts = [
-			...(vault ? ["the vault password"] : []),
+			...(this.vaultPassword !== null ? ["the vault password"] : []),
 			...(separate === 1 ? ["a separate password for 1 note or folder"] : []),
 			...(separate > 1 ? [`separate passwords for ${separate} notes or folders`] : []),
+			// An unlocked note holds its own password until it locks again; otherwise it couldn't re-lock.
+			...(unlocked === 1 ? ["the password of 1 unlocked note"] : []),
+			...(unlocked > 1 ? [`the passwords of ${unlocked} unlocked notes`] : []),
 		];
-		return `In memory on this device: ${parts.join(" and ")}. Forget them to be asked for every password again.`;
+		if (parts.length === 0) return "No passwords are in memory on this device right now.";
+		const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
+		return `In memory on this device: ${list}. Lock and forget to clear them.`;
 	}
 
 	forgetSeparatePasswords(): void {
 		this.separatePasswords.clear();
 	}
 
-	/** Forget the vault password and every remembered separate password. */
-	forgetAllPasswords(): void {
+	/**
+	 * Lock every unlocked note, then forget every password in memory. Locking
+	 * comes first because an unlocked note keeps its password until it locks
+	 * again; afterwards no password is left on this device.
+	 */
+	async lockAndForget(): Promise<void> {
+		await this.lockAll(true);
 		this.forgetVaultPassword(true);
 		this.forgetSeparatePasswords();
-		new Notice("Enclave: forgot all remembered passwords.");
+		const stillUnlocked = this.unlocked.size;
+		new Notice(
+			stillUnlocked > 0
+				? `Enclave: forgot all passwords, but ${stillUnlocked} note(s) couldn't be locked and keep their password until they are.`
+				: "Enclave: locked all notes and forgot all passwords."
+		);
 	}
 
 	/** Tell the user why their edit was refused, at most every few seconds. */

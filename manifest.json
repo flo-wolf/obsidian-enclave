@@ -1,7 +1,7 @@
 {
 	"id": "enclave",
 	"name": "Enclave",
-	"version": "1.4.1",
+	"version": "1.4.2",
 	"minAppVersion": "1.13.0",
 	"description": "Encrypt notes and whole folders with a vault password or their own password. Locked notes keep their names and links, lock again automatically, and can be decrypted for good at any time.",
 	"author": "Florian Wolf",

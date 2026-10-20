@@ -188,13 +188,22 @@ export class EnclaveSettingTab extends PluginSettingTab {
 				type: "group",
 				heading: "Passwords and encryption",
 				items: [
+					// These two describe the current state, so their text is set while
+					// rendering: Obsidian builds the definitions once and re-renders
+					// rows each time the tab is shown.
 					{
 						name: "Vault password",
-						desc: settings.vaultCheck
-							? "You've chosen a vault password, so a mistyped one is rejected right away. Change it to choose a new one the next time you lock a note; notes locked with the current one keep opening with it."
-							: "You haven't chosen a vault password yet. You choose it the first time you lock a note with the vault password.",
+						desc: "Whether you've chosen a vault password, and a way to change it.",
 						render: (setting) => {
-							if (!settings.vaultCheck) return;
+							if (!this.plugin.settings.vaultCheck) {
+								setting.setDesc(
+									"You haven't chosen a vault password yet. You choose it the first time you lock a note with the vault password."
+								);
+								return;
+							}
+							setting.setDesc(
+								"You've chosen a vault password, so a mistyped one is rejected right away. Change it to choose a new one the next time you lock a note; notes locked with the current one keep opening with it."
+							);
 							setting.addButton((button) =>
 								button
 									.setButtonText("Change")
@@ -204,14 +213,12 @@ export class EnclaveSettingTab extends PluginSettingTab {
 						},
 					},
 					{
-						name: "Remembered passwords",
-						desc: this.plugin.rememberedPasswordsSummary(),
+						name: "Passwords in memory",
+						desc: "Which passwords are in memory on this device, and a way to lock everything and forget them.",
 						render: (setting) => {
+							setting.setDesc(this.plugin.rememberedPasswordsSummary());
 							setting.addButton((button) =>
-								button.setButtonText("Forget now").onClick(() => {
-									this.plugin.forgetAllPasswords();
-									this.update();
-								})
+								button.setButtonText("Lock and forget").onClick(() => void this.lockAndForget())
 							);
 						},
 					},
@@ -277,6 +284,11 @@ export class EnclaveSettingTab extends PluginSettingTab {
 		}).ask();
 		if (!confirmed) return;
 		await this.plugin.resetVaultCheck();
+		this.update();
+	}
+
+	private async lockAndForget(): Promise<void> {
+		await this.plugin.lockAndForget();
 		this.update();
 	}
 

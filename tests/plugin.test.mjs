@@ -896,7 +896,7 @@ test("forgetting all passwords also forgets remembered separate passwords", asyn
 	plugin.passwordQueue = [notePw, notePw];
 	await plugin.unlockNote(files.get("private/a.md"));
 	await plugin.lockAll(true);
-	plugin.forgetAllPasswords();
+	await plugin.lockAndForget();
 	await plugin.unlockNote(files.get("private/a.md"));
 
 	assert.equal(plugin.prompts, 2);
@@ -920,7 +920,7 @@ test("with a remembered folder password, a note moved in is locked after a confi
 	assert.match(plugin.moveInPrompts[0], /locked with a separate password/);
 	assert.ok(isLocked(files.get("private/idea.md").content));
 
-	plugin.forgetAllPasswords();
+	await plugin.lockAndForget();
 	plugin.passwordQueue = [folderPw];
 	await plugin.unlockNote(files.get("private/idea.md"));
 	assert.equal(files.get("private/idea.md").content, "An idea", "locked with the folder's password");
@@ -1058,9 +1058,25 @@ test("the settings tab can tell which passwords are in memory", async () => {
 	await plugin.unlockNote(files.get("private/a.md"));
 	assert.equal(
 		plugin.rememberedPasswordsSummary(),
-		"In memory on this device: a separate password for 1 note or folder. Forget them to be asked for every password again."
+		"In memory on this device: a separate password for 1 note or folder and the password of 1 unlocked note. Lock and forget to clear them."
 	);
+});
 
-	plugin.forgetAllPasswords();
+test("lock and forget locks unlocked notes first, so no password is left", async () => {
+	const vaultPw = "vaultPassword123";
+	const { app, files } = createMockApp({
+		"a.md": buildLockedNote(await encryptContent("Note A", vaultPw, "vault", 100000)),
+	});
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.passwordQueue = [vaultPw];
+	await plugin.unlockNote(files.get("a.md"));
+	assert.match(plugin.rememberedPasswordsSummary(), /the vault password and the password of 1 unlocked note/);
+
+	await plugin.lockAndForget();
+
+	assert.ok(isLocked(files.get("a.md").content), "the unlocked note was locked with its password first");
+	assert.equal(plugin.vaultPassword, null);
+	assert.equal(plugin.getUnlockedMap().size, 0);
 	assert.match(plugin.rememberedPasswordsSummary(), /^No passwords are in memory/);
 });
