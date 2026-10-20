@@ -110,6 +110,9 @@ export function lockedCardExtension(render: CardRenderer) {
 	return Prec.highest(field);
 }
 
+/** Class on the editor of a locked note (see styles.css). */
+export const LOCKED_CLASS = "enclave-locked";
+
 /** User actions that change the text: typing, deleting, pasting, dropping, moving text, undo and redo. */
 const EDIT_EVENTS = ["input", "delete", "move", "undo", "redo"];
 
@@ -118,16 +121,24 @@ const EDIT_EVENTS = ["input", "delete", "move", "undo", "redo"];
  * gets typed into the encrypted file (where unlocking would silently drop it).
  *
  * The text is marked non-editable while the note is locked, so it takes no
- * cursor, focus or keyboard (on mobile, tapping it doesn't open the keyboard).
- * A change filter backs that up for user edits that arrive another way.
+ * focus or keyboard (on mobile, tapping it doesn't open the keyboard), and the
+ * editor gets the `enclave-locked` class, which styles.css uses to hide the
+ * cursor however it's drawn. A change filter backs this up for user edits that
+ * arrive another way.
  * Changes without a user event, such as Enclave unlocking the note or Obsidian
  * reloading it after a sync, still go through.
  */
 export function lockedNoteReadOnly(onBlocked: () => void) {
 	return [
-		EditorView.contentAttributes.compute(["doc"], (state): Record<string, string> =>
-			findPayloadBlock(state) ? { contenteditable: "false" } : {}
-		),
+		// Highest precedence, so no other extension's attributes can override these.
+		Prec.highest([
+			EditorView.contentAttributes.compute(["doc"], (state): Record<string, string> =>
+				findPayloadBlock(state) ? { contenteditable: "false" } : {}
+			),
+			EditorView.editorAttributes.compute(["doc"], (state): Record<string, string> =>
+				findPayloadBlock(state) ? { class: LOCKED_CLASS } : {}
+			),
+		]),
 		EditorState.changeFilter.of((tr) => {
 			if (!tr.docChanged || !EDIT_EVENTS.some((event) => tr.isUserEvent(event))) return true;
 			if (!findPayloadBlock(tr.startState)) return true;

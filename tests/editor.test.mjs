@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { findPayloadBlock, lockedNoteReadOnly } from "../src/editor.ts";
+import { findPayloadBlock, LOCKED_CLASS, lockedNoteReadOnly } from "../src/editor.ts";
 import { buildLockedNote } from "../src/format.ts";
 
 const payload = {
@@ -79,4 +79,15 @@ test("lockedNoteReadOnly makes only a locked note's text non-editable", () => {
 	const locked = EditorState.create({ doc: buildLockedNote(payload), extensions });
 	const unlocked = locked.update({ changes: { from: 0, to: locked.doc.length, insert: "Plain text" } }).state;
 	assert.equal(unlocked.facet(EditorView.contentAttributes).some((a) => a.contenteditable === "false"), false);
+});
+
+test("lockedNoteReadOnly marks a locked note's editor so its cursor can be hidden", () => {
+	const extensions = [lockedNoteReadOnly(() => {})];
+	const marked = (doc) =>
+		EditorState.create({ doc, extensions })
+			.facet(EditorView.editorAttributes)
+			.some((attrs) => attrs.class === LOCKED_CLASS);
+
+	assert.equal(marked(buildLockedNote(payload)), true);
+	assert.equal(marked("Plain note"), false);
 });

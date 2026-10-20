@@ -125,3 +125,14 @@ body.enclave-hide-lock-properties
 	) {
 	display: none !important;
 }
+
+/* No cursor in a locked note, whether the browser draws it (caret) or the
+   editor does (.cm-cursor). !important so themes can't bring it back. */
+.enclave-locked .cm-content {
+	caret-color: transparent !important;
+}
+
+.enclave-locked .cm-cursor,
+.enclave-locked .cm-dropCursor {
+	display: none !important;
+}
