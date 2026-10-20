@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import EnclavePlugin from "../src/main.ts";
-import { isLocked, buildLockedNote } from "../src/format.ts";
-import { encryptContent } from "../src/crypto.ts";
+import { isLocked, buildLockedNote, parseLockedNote } from "../src/format.ts";
+import { decryptContent, encryptContent } from "../src/crypto.ts";
 import { Platform, TFile, TFolder } from "obsidian";
 
 // The plugin schedules its move-in prompt with window.setTimeout.
@@ -1088,4 +1088,145 @@ test("lock and forget locks unlocked notes first, so no password is left", async
 	assert.equal(plugin.vaultPassword, null);
 	assert.equal(plugin.getUnlockedMap().size, 0);
 	assert.match(plugin.rememberedPasswordsSummary(), /^Nothing is unlocked/);
+});
+
+// ---- api for sync plugins ----
+
+test("the api says which notes must not be uploaded", async () => {
+	const vaultPw = "vaultPassword123";
+	const { app, files } = createMockApp({
+		"open.md": buildLockedNote(await encryptContent("Open note", vaultPw, "vault", 100000)),
+		"plain.md": "Ordinary note",
+		"private/draft.md": "Not locked yet",
+		"private/done.md": buildLockedNote(await encryptContent("Locked", vaultPw, "vault", 100000)),
+	});
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.settings.protectedFolders = [{ path: "private", scope: "vault" }];
+	plugin.passwordQueue = [vaultPw];
+	await plugin.unlockNote(files.get("open.md"));
+
+	assert.equal(plugin.api.version, 1);
+	assert.equal(await plugin.api.holdReason("open.md"), "unlocked");
+	assert.equal(await plugin.api.holdReason("plain.md"), null, "plain notes outside locked folders sync as usual");
+	assert.equal(await plugin.api.holdReason("private/draft.md"), "not-locked-yet");
+	assert.equal(await plugin.api.holdReason("private/done.md"), null, "locked content may be uploaded");
+
+	await plugin.lockAll(true);
+	assert.equal(await plugin.api.holdReason("open.md"), null);
+});
+
+test("intentionally plain notes in a locked folder may be uploaded, until they're locked again", async () => {
+	const vaultPw = "vaultPassword123";
+	const { app, files } = createMockApp({
+		"private/a.md": buildLockedNote(await encryptContent("Note A", vaultPw, "vault", 100000)),
+		"inbox/idea.md": "An idea",
+	});
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.settings.protectedFolders = [{ path: "private", scope: "vault" }];
+
+	// Permanently decrypted on purpose.
+	plugin.passwordQueue = [vaultPw];
+	await plugin.permanentlyDecryptNote(files.get("private/a.md"));
+	assert.equal(plugin.api.isIntentionallyPlain("private/a.md"), true);
+	assert.equal(await plugin.api.holdReason("private/a.md"), null);
+
+	// Declined when moved in.
+	plugin.confirmResponse = false;
+	plugin.onRename(moveFile(files, "inbox/idea.md", "private/idea.md"), "inbox/idea.md");
+	await plugin.promptMovedIn();
+	assert.equal(await plugin.api.holdReason("private/idea.md"), null);
+
+	// Renaming keeps the mark; locking again removes it.
+	plugin.onRename(moveFile(files, "private/a.md", "private/b.md"), "private/a.md");
+	assert.equal(plugin.api.isIntentionallyPlain("private/b.md"), true);
+	plugin.passwordQueue = [vaultPw];
+	await plugin.lockNote(files.get("private/b.md"), "vault");
+	assert.equal(plugin.api.isIntentionallyPlain("private/b.md"), false);
+});
+
+test("a note locked again unchanged gets back its exact earlier encrypted version", async () => {
+	const vaultPw = "vaultPassword123";
+	const original = buildLockedNote(await encryptContent("Note A", vaultPw, "vault", 100000));
+	const { app, files } = createMockApp({ "a.md": original });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.passwordQueue = [vaultPw];
+
+	await plugin.unlockNote(files.get("a.md"));
+	await plugin.lockAll(true);
+	assert.equal(files.get("a.md").content, original, "unchanged: byte for byte the same file");
+
+	await plugin.unlockNote(files.get("a.md"));
+	files.get("a.md").content = "Note A, edited";
+	await plugin.lockAll(true);
+	assert.ok(isLocked(files.get("a.md").content));
+	assert.notEqual(files.get("a.md").content, original, "edited: encrypted anew");
+});
+
+test("the api reports every lock to listeners until they unsubscribe", async () => {
+	const { app, files } = createMockApp({ "a.md": "Note A", "b.md": "Note B" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	const locked = [];
+	const unsubscribe = plugin.api.onLocked((path) => locked.push(path));
+
+	plugin.passwordQueue = ["vaultPassword123"];
+	await plugin.lockNote(files.get("a.md"), "vault");
+	unsubscribe();
+	await plugin.lockNote(files.get("b.md"), "vault");
+
+	assert.deepEqual(locked, ["a.md"]);
+});
+
+test("a merge session decrypts conflict versions in memory and seals the result", async () => {
+	const vaultPw = "vaultPassword123";
+	const otherPw = "otherSecret456";
+	const { app } = createMockApp({});
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+
+	const base = buildLockedNote(await encryptContent("line 1\nline 2", vaultPw, "vault", 100000));
+	const mine = buildLockedNote(await encryptContent("line 1 mine\nline 2", vaultPw, "vault", 100000));
+	const theirs = buildLockedNote(await encryptContent("line 1\nline 2 theirs", otherPw, "note", 100000));
+
+	plugin.prompts = 0;
+	plugin.passwordQueue = [vaultPw, otherPw];
+	const session = await plugin.api.openForMerge("a.md", [
+		{ label: "the last synced version", content: base, optional: true },
+		{ label: "this device's version", content: mine },
+		{ label: "GitLab's version", content: theirs },
+	]);
+	assert.ok(session);
+	assert.equal(plugin.prompts, 2, "asked for this device's and GitLab's password, never the base's");
+	assert.deepEqual(session.texts, [null, "line 1 mine\nline 2", "line 1\nline 2 theirs"]);
+	assert.deepEqual(session.locks, [null, { scope: "vault" }, { scope: "note" }]);
+	assert.equal(session.sameLock, false);
+
+	const sealed = await session.seal("line 1 mine\nline 2 theirs", 2);
+	assert.ok(isLocked(sealed));
+	assert.match(sealed, /^lock-scope: note$/m, "kept GitLab's kind of lock");
+	assert.equal(await decryptContent(parseLockedNote(sealed), otherPw), "line 1 mine\nline 2 theirs");
+	await assert.rejects(() => session.seal("again", 2), "passwords are forgotten after sealing");
+});
+
+test("a merge session uses passwords Enclave already has, without asking", async () => {
+	const vaultPw = "vaultPassword123";
+	const { app, files } = createMockApp({ "a.md": "Note A" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.passwordQueue = [vaultPw];
+	await plugin.lockNote(files.get("a.md"), "vault");
+
+	const remote = buildLockedNote(await encryptContent("Note A from elsewhere", vaultPw, "vault", 100000));
+	plugin.prompts = 0;
+	const session = await plugin.api.openForMerge("a.md", [
+		{ label: "this device's version", content: files.get("a.md").content },
+		{ label: "GitLab's version", content: remote },
+	]);
+	assert.equal(plugin.prompts, 0);
+	assert.deepEqual(session.texts, ["Note A", "Note A from elsewhere"]);
+	assert.equal(session.sameLock, true);
+	session.close();
 });

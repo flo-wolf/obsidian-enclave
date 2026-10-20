@@ -51,6 +51,11 @@ export interface EnclaveSettings {
 	protectedFolders: ProtectedFolder[];
 	/** A check the vault password is verified against; set when it's first chosen or used. */
 	vaultCheck: EnclavePayload | null;
+	/**
+	 * Notes made plain on purpose (permanently decrypted, or left unlocked when
+	 * moved into a locked folder), so sync tools may upload them as plain text.
+	 */
+	plainNotes: string[];
 }
 
 export const DEFAULT_SETTINGS: EnclaveSettings = {
@@ -70,6 +75,7 @@ export const DEFAULT_SETTINGS: EnclaveSettings = {
 	verifyOnLock: true,
 	protectedFolders: [],
 	vaultCheck: null,
+	plainNotes: [],
 };
 
 export class EnclaveSettingTab extends PluginSettingTab {

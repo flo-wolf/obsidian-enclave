@@ -23,6 +23,7 @@ import {
 import { buildLockedNote, FENCE_LANG, isLocked, isPayload, parseLockedNote, readScope } from "./format";
 import { ConfirmModal } from "./ConfirmModal";
 import { PasswordModal, type PasswordPromptOptions } from "./PasswordModal";
+import { API_VERSION, type EnclaveApi, type HoldReason, type MergeSession, type MergeVersion } from "./api";
 import { lockedCardExtension, lockedNoteReadOnly } from "./editor";
 import {
 	DEFAULT_SETTINGS,
@@ -50,6 +51,9 @@ interface UnlockedNote {
 	scope: EnclaveScope;
 	iterations: number;
 	lastTouched: number;
+	/** The locked file as it was before unlocking, and the text it unlocked to. */
+	lockedContent: string;
+	unlockedText: string;
 }
 
 /** One crash-recovery ledger entry: a path that held plaintext, plus its scope. */
@@ -127,6 +131,31 @@ export default class EnclavePlugin extends Plugin {
 	 */
 	private separatePasswords = new Map<string, { password: string; usedAt: number }>();
 
+	/** Callbacks registered through api.onLocked(). */
+	private lockListeners = new Set<(path: string) => void>();
+
+	/** Resolved once startup crash recovery has run (api.ready()). */
+	private resolveReady: () => void = () => {};
+	private readyPromise = new Promise<void>((resolve) => (this.resolveReady = resolve));
+
+	/** The interface other plugins, such as sync plugins, use. See api.ts. */
+	readonly api: EnclaveApi = {
+		version: API_VERSION,
+		ready: () => this.readyPromise,
+		holdReason: (path) => this.holdReason(path),
+		isLockedContent: (content) => isLocked(content),
+		isIntentionallyPlain: (path) => this.settings.plainNotes.includes(path),
+		lockAll: async () => {
+			await this.lockAll(true);
+			return this.unlocked.size;
+		},
+		onLocked: (callback) => {
+			this.lockListeners.add(callback);
+			return () => this.lockListeners.delete(callback);
+		},
+		openForMerge: (path, versions) => this.openForMerge(path, versions),
+	};
+
 	/** When the "this note is locked" hint was last shown, so typing doesn't flood notices. */
 	private lastLockedEditNotice = 0;
 
@@ -172,7 +201,7 @@ export default class EnclavePlugin extends Plugin {
 		this.app.workspace.onLayoutReady(() => {
 			this.lastActiveFile = this.app.workspace.getActiveFile()?.path ?? null;
 			this.markLockedViews();
-			void this.recoverExposedNotes();
+			void this.recoverExposedNotes().finally(() => this.resolveReady());
 			// Registered after layout-ready: Obsidian fires "create" for every file while loading the vault.
 			this.registerEvent(this.app.vault.on("create", (file) => this.onCreate(file)));
 		});
@@ -339,6 +368,7 @@ export default class EnclavePlugin extends Plugin {
 			this.app.vault.on("delete", (file: TAbstractFile) => {
 				this.newInProtected.delete(file.path);
 				this.movedIn.delete(file.path);
+				this.movePlainNotes(file.path, null);
 				if (file instanceof TFolder) void this.forgetProtectedUnder(file.path);
 				if (this.unlocked.delete(file.path)) {
 					void this.persist();
@@ -380,6 +410,7 @@ export default class EnclavePlugin extends Plugin {
 			)
 			.map((f) => (isPayload(f.check) ? f : { path: f.path, scope: f.scope }));
 		if (!isPayload(this.settings.vaultCheck)) this.settings.vaultCheck = null;
+		this.settings.plainNotes = (this.settings.plainNotes ?? []).filter((p): p is string => typeof p === "string");
 		// "Remember separate passwords" (a toggle until 1.2) became rememberPasswords.
 		// Checked on the stored data, since the defaults already filled in a value.
 		const stored = raw?.settings as (Partial<EnclaveSettings> & { rememberSeparatePasswords?: boolean }) | undefined;
@@ -590,21 +621,43 @@ export default class EnclavePlugin extends Plugin {
 	 */
 	private async writeContent(file: TFile, expected: string, next: string): Promise<boolean> {
 		const views = this.findEditorViews(file);
+		let written = true;
 		if (views.length > 0) {
 			if (views.some((v) => v.editor.getValue() !== expected)) return false;
 			for (const v of views) v.editor.setValue(next);
 			await this.app.vault.modify(file, next);
-			return true;
+		} else {
+			await this.app.vault.process(file, (current) => {
+				if (current !== expected) {
+					written = false;
+					return current; // no-op write
+				}
+				return next;
+			});
 		}
-		let aborted = false;
-		await this.app.vault.process(file, (current) => {
-			if (current !== expected) {
-				aborted = true;
-				return current; // no-op write
+		if (written && isLocked(next)) this.noteLocked(file.path);
+		return written;
+	}
+
+	/** Every lock goes through here: the note is no longer plain on purpose, and listeners hear about it. */
+	private noteLocked(path: string): void {
+		if (this.settings.plainNotes.includes(path)) {
+			this.settings = { ...this.settings, plainNotes: this.settings.plainNotes.filter((p) => p !== path) };
+			void this.persist();
+		}
+		for (const listener of this.lockListeners) {
+			try {
+				listener(path);
+			} catch (e) {
+				console.error("Enclave: a lock listener failed", e);
 			}
-			return next;
-		});
-		return !aborted;
+		}
+	}
+
+	/** Remember that a note is plain on purpose, so sync tools may upload it as is. */
+	private markPlain(path: string): void {
+		if (this.settings.plainNotes.includes(path)) return;
+		this.settings = { ...this.settings, plainNotes: [...this.settings.plainNotes, path] };
 	}
 
 	/**
@@ -711,6 +764,8 @@ export default class EnclavePlugin extends Plugin {
 					scope,
 					iterations: payload.iterations,
 					lastTouched: this.now(),
+					lockedContent: content,
+					unlockedText: plaintext,
 				});
 				if (scope === "vault") await this.vaultPasswordWorked(password);
 				await this.persist();
@@ -744,6 +799,7 @@ export default class EnclavePlugin extends Plugin {
 
 				this.unlocked.delete(file.path);
 				this.exposed = this.exposed.filter((e) => e.file.path !== file.path);
+				this.markPlain(file.path);
 				await this.persist();
 				this.updateStatusBar();
 				new Notice(`Enclave: permanently decrypted "${file.basename}".`);
@@ -775,6 +831,7 @@ export default class EnclavePlugin extends Plugin {
 				}
 				this.unlocked.delete(file.path);
 				this.exposed = this.exposed.filter((e) => e.file.path !== file.path);
+				this.markPlain(file.path);
 				if (scope === "vault") await this.vaultPasswordWorked(password);
 				await this.persist();
 				this.updateStatusBar();
@@ -897,8 +954,14 @@ export default class EnclavePlugin extends Plugin {
 				info.scope === "vault" ? this.vaultPassword ?? info.password : info.password;
 
 			try {
-				const payload = await this.seal(content, password, info.scope, info.iterations);
-				const written = await this.writeContent(file, content, buildLockedNote(payload));
+				// Unchanged since it was unlocked, and locked with the same password: put back
+				// the exact encrypted version from before. The file then doesn't change at all,
+				// so sync tools see nothing new and two devices can't conflict over it.
+				const next =
+					content === info.unlockedText && password === info.password
+						? info.lockedContent
+						: buildLockedNote(await this.seal(content, password, info.scope, info.iterations));
+				const written = await this.writeContent(file, content, next);
 				if (!written) {
 					new Notice(`Enclave: "${file.basename}" changed while locking — left unlocked, will retry.`);
 					return;
@@ -1234,6 +1297,8 @@ export default class EnclavePlugin extends Plugin {
 								scope,
 								iterations: payload.iterations,
 								lastTouched: this.now(),
+								lockedContent: content,
+								unlockedText: plaintext,
 							});
 							// Persist per note so a crash mid-bulk still leaves a recoverable
 							// ledger of the plaintext we've already written (matches unlockNote).
@@ -1328,6 +1393,7 @@ export default class EnclavePlugin extends Plugin {
 				const ran = await this.withFileLock(file.path, async () => {
 					this.unlocked.delete(file.path);
 					this.exposed = this.exposed.filter((e) => e.file.path !== file.path);
+					this.markPlain(file.path);
 					decryptedCount++;
 				});
 				if (!ran) skipped++;
@@ -1341,6 +1407,7 @@ export default class EnclavePlugin extends Plugin {
 						if (await this.writeContent(file, content, plaintext)) {
 							this.unlocked.delete(file.path);
 							this.exposed = this.exposed.filter((e) => e.file.path !== file.path);
+							this.markPlain(file.path);
 							decryptedCount++;
 							if (scope === "vault") vaultDone++;
 						} else {
@@ -1763,6 +1830,102 @@ export default class EnclavePlugin extends Plugin {
 		if (!silent) new Notice("Enclave: forgot the cached vault password.");
 	}
 
+	// ---- api for other plugins (see api.ts) -----------------------------
+
+	/** See EnclaveApi.holdReason. */
+	private async holdReason(path: string): Promise<HoldReason | null> {
+		if (this.unlocked.has(path)) return "unlocked";
+		if (this.exposed.some((e) => e.file.path === path)) return "exposed";
+		if (!path.toLowerCase().endsWith(".md") || !this.protectedFolderOf(path)) return null;
+		if (this.settings.plainNotes.includes(path)) return null;
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) return null;
+		return isLocked(await this.readLiveContent(file)) ? null : "not-locked-yet";
+	}
+
+	/** See EnclaveApi.openForMerge. */
+	private async openForMerge(path: string, versions: MergeVersion[]): Promise<MergeSession | null> {
+		const name = path.split("/").pop()?.replace(/\.md$/i, "") ?? path;
+		const folder = this.protectedFolderOf(path);
+		const known = [
+			this.rememberedPassword(noteKey(path)),
+			folder?.scope === "note" ? this.rememberedPassword(folderKey(folder.path)) : null,
+			this.vaultPassword,
+		].filter((pw): pw is string => !!pw);
+		const passwords: (string | null)[] = [];
+		const texts: (string | null)[] = [];
+		const locks: ({ scope: EnclaveScope } | null)[] = [];
+
+		for (const version of versions) {
+			const payload = version.content !== null && isLocked(version.content) ? parseLockedNote(version.content) : null;
+			if (!payload) {
+				texts.push(version.content);
+				passwords.push(null);
+				locks.push(null);
+				continue;
+			}
+			let password: string | null = null;
+			let text: string | null = null;
+			for (const candidate of new Set([...passwords.filter((p): p is string => !!p), ...known])) {
+				text = await this.tryDecrypt(payload, candidate);
+				if (text !== null) {
+					password = candidate;
+					break;
+				}
+			}
+			if (text === null && !version.optional) {
+				password = await this.promptPassword({
+					title: "Resolve conflict",
+					description: `Enter the password for ${version.label} of "${name}".`,
+					cta: "Open",
+				});
+				if (!password) return null;
+				text = await this.tryDecrypt(payload, password);
+				if (text === null) {
+					new Notice("Enclave: incorrect password.");
+					return null;
+				}
+			}
+			texts.push(text);
+			passwords.push(text === null ? null : password);
+			locks.push(text === null ? null : { scope: payload.scope ?? "vault" });
+		}
+
+		const opened = passwords
+			.map((password, i) => (password ? `${locks[i]?.scope}:${password}` : null))
+			.filter((key): key is string => key !== null);
+		const close = () => {
+			passwords.fill(null);
+		};
+		return {
+			texts,
+			locks,
+			sameLock: new Set(opened).size <= 1,
+			close,
+			seal: async (text, keep) => {
+				const password = passwords[keep];
+				const lock = locks[keep];
+				const source = versions[keep]?.content;
+				const payload = source ? parseLockedNote(source) : null;
+				close();
+				if (!password || !lock || !payload) throw new Error("Enclave: that version isn't an opened locked note.");
+				return buildLockedNote(await this.seal(text, password, lock.scope, payload.iterations));
+			},
+		};
+	}
+
+	/** Keep the list of intentionally plain notes in step with renames (`to` null: deleted). */
+	private movePlainNotes(from: string, to: string | null): void {
+		const before = this.settings.plainNotes;
+		const after = before.flatMap((p) => {
+			if (p !== from && !p.startsWith(from + "/")) return [p];
+			return to === null ? [] : [to + p.slice(from.length)];
+		});
+		if (after.length === before.length && after.every((p, i) => p === before[i])) return;
+		this.settings = { ...this.settings, plainNotes: after };
+		void this.persist();
+	}
+
 	// ---- protected folders ----------------------------------------------
 
 	/** The innermost protected folder `path` lies in, checked against `folders` (default: current settings). */
@@ -1890,7 +2053,11 @@ export default class EnclavePlugin extends Plugin {
 			const agreed =
 				how === "created" ||
 				(await this.confirmMoveIn(`${subject}, which is locked with ${kind}. Lock ${one ? "it" : "them"} too?`));
-			if (!agreed) return;
+			if (!agreed) {
+				for (const file of files) this.markPlain(file.path);
+				await this.persist();
+				return;
+			}
 			const password = remembered ? async () => remembered : undefined;
 			await this.lockFiles(files, target, folder.scope, { confirm: false, password });
 			return;
@@ -1929,6 +2096,7 @@ export default class EnclavePlugin extends Plugin {
 		if (this.lastActiveFile === oldPath) this.lastActiveFile = file.path;
 		if (this.newInProtected.delete(oldPath)) this.newInProtected.add(file.path);
 		if (this.movedIn.delete(oldPath)) this.movedIn.add(file.path);
+		this.movePlainNotes(oldPath, file.path);
 		this.moveRememberedPasswords(oldPath, file.path);
 
 		if (file instanceof TFolder) {
