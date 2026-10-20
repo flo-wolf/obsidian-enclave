@@ -8,7 +8,8 @@ a password, edit it as usual, and it locks itself again when you're done. Locked
 notes keep their names, so they still show up in the file explorer, in links and
 in the graph.
 
-<img width="831" height="488" alt="Screenshot 2026-10-19 at 20 37 15" src="https://github.com/user-attachments/assets/25998377-3a13-415e-a5d0-d21148c5ae32" />
+<img width="836" height="308" alt="Enclave-note-lock" src="https://github.com/user-attachments/assets/8410e2d1-7104-495f-b0dd-fee80035e1a5" />
+
 
 ---
 
