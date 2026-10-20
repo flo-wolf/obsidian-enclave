@@ -367,6 +367,11 @@ function moveFile(files, oldPath, newPath) {
 	return file;
 }
 
+/** The locked-folder list without the stored password checks, for comparisons. */
+function foldersWithoutChecks(plugin) {
+	return plugin.settings.protectedFolders.map(({ path, scope }) => ({ path, scope }));
+}
+
 async function waitFor(condition) {
 	for (let i = 0; i < 100 && !condition(); i++) await new Promise((r) => setTimeout(r, 20));
 }
@@ -502,7 +507,8 @@ test("a note moved into a separate-password folder is locked with that folder's 
 	plugin.settings.iterations = 100000;
 	plugin.passwordQueue = [folderPw];
 	await plugin.lockFolder(new TFolder("private"), "note");
-	assert.deepEqual(plugin.settings.protectedFolders, [{ path: "private", scope: "note" }]);
+	assert.deepEqual(foldersWithoutChecks(plugin), [{ path: "private", scope: "note" }]);
+	assert.ok(plugin.settings.protectedFolders[0].check, "a separate-password folder keeps a check");
 
 	// A wrong password is rejected and nothing is locked.
 	plugin.passwordQueue = ["wrongPassword123"];
@@ -540,7 +546,8 @@ test("re-locking a separate-password folder must reuse its existing password", a
 	plugin.passwordQueue = [folderPw];
 	await plugin.lockFolder(new TFolder("private"), "note");
 	assert.ok(isLocked(files.get("private/b.md").content));
-	assert.deepEqual(plugin.settings.protectedFolders, [{ path: "private", scope: "note" }]);
+	assert.deepEqual(foldersWithoutChecks(plugin), [{ path: "private", scope: "note" }]);
+	assert.ok(plugin.settings.protectedFolders[0].check, "a separate-password folder keeps a check");
 });
 
 test("permanently decrypting a folder stops keeping it and its subfolders locked", async () => {
@@ -579,4 +586,131 @@ test("a note created in a separate-password folder asks for that password when l
 
 	await waitFor(() => isLocked(files.get("private/new.md").content));
 	assert.match(files.get("private/new.md").content, /^lock-scope: note$/m);
+});
+
+test("the vault password is chosen once, then a mistyped one is rejected", async () => {
+	const { app, files } = createMockApp({ "a.md": "Note A", "b.md": "Note B" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+
+	plugin.passwordQueue = ["vaultPassword123"];
+	await plugin.lockNote(files.get("a.md"), "vault");
+	assert.ok(isLocked(files.get("a.md").content));
+	assert.ok(plugin.settings.vaultCheck, "choosing the vault password stores a check");
+
+	// Next session: a typo is refused instead of becoming a second vault password.
+	plugin.forgetVaultPassword(true);
+	plugin.passwordQueue = ["vaultPasword123"];
+	await plugin.lockNote(files.get("b.md"), "vault");
+	assert.equal(files.get("b.md").content, "Note B");
+
+	plugin.passwordQueue = ["vaultPassword123"];
+	await plugin.lockNote(files.get("b.md"), "vault");
+	assert.ok(isLocked(files.get("b.md").content));
+});
+
+test("a vault check is created the first time the vault password opens a note", async () => {
+	const vaultPw = "vaultPassword123";
+	const { app, files } = createMockApp({
+		"a.md": buildLockedNote(await encryptContent("Note A", vaultPw, "vault", 100000)),
+	});
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+
+	plugin.passwordQueue = ["wrongPassword123"];
+	await plugin.unlockNote(files.get("a.md"));
+	assert.equal(plugin.settings.vaultCheck, null, "a wrong password never becomes the check");
+
+	plugin.passwordQueue = [vaultPw];
+	await plugin.unlockNote(files.get("a.md"));
+	assert.equal(files.get("a.md").content, "Note A");
+	assert.ok(plugin.settings.vaultCheck);
+});
+
+test("forgetting the vault check lets a new vault password be chosen", async () => {
+	const { app, files } = createMockApp({ "a.md": "Note A", "b.md": "Note B" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.passwordQueue = ["vaultPassword123"];
+	await plugin.lockNote(files.get("a.md"), "vault");
+
+	await plugin.resetVaultCheck();
+	assert.equal(plugin.settings.vaultCheck, null);
+
+	plugin.passwordQueue = ["newVaultPassword456"];
+	await plugin.lockNote(files.get("b.md"), "vault");
+	assert.ok(isLocked(files.get("b.md").content));
+
+	plugin.forgetVaultPassword(true);
+	plugin.passwordQueue = ["newVaultPassword456"];
+	await plugin.unlockNote(files.get("b.md"));
+	assert.equal(files.get("b.md").content, "Note B");
+});
+
+test("a separate-password folder accepts only its own password, even with other passwords inside", async () => {
+	const folderPw = "folderSecret123";
+	const otherPw = "otherSecret456";
+	const { app, files } = createMockApp({
+		"private/a.md": "Note A",
+		"inbox/idea.md": "An idea",
+	});
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.passwordQueue = [folderPw];
+	await plugin.lockFolder(new TFolder("private"), "note");
+
+	// A note with its own, different separate password sits in the folder too.
+	files.set("private/own.md", new TFile("private/own.md", buildLockedNote(await encryptContent("Own", otherPw, "note", 100000))));
+
+	plugin.passwordQueue = [otherPw];
+	plugin.onRename(moveFile(files, "inbox/idea.md", "private/idea.md"), "inbox/idea.md");
+	await plugin.promptMovedIn();
+	assert.equal(files.get("private/idea.md").content, "An idea", "the other note's password is refused");
+
+	plugin.onRename(moveFile(files, "private/idea.md", "inbox/idea.md"), "private/idea.md");
+	plugin.onRename(moveFile(files, "inbox/idea.md", "private/idea.md"), "inbox/idea.md");
+	plugin.passwordQueue = [folderPw];
+	await plugin.promptMovedIn();
+	assert.ok(isLocked(files.get("private/idea.md").content));
+
+	plugin.passwordQueue = [folderPw];
+	await plugin.unlockNote(files.get("private/idea.md"));
+	assert.equal(files.get("private/idea.md").content, "An idea");
+});
+
+test("locking an empty folder with a separate password sets its password right away", async () => {
+	const folderPw = "folderSecret123";
+	const { app, files } = createMockApp({ "inbox/idea.md": "An idea" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+
+	plugin.passwordQueue = [folderPw];
+	await plugin.lockFolder(new TFolder("empty"), "note");
+	assert.ok(plugin.settings.protectedFolders[0].check);
+
+	plugin.passwordQueue = ["wrongPassword123"];
+	plugin.onRename(moveFile(files, "inbox/idea.md", "empty/idea.md"), "inbox/idea.md");
+	await plugin.promptMovedIn();
+	assert.equal(files.get("empty/idea.md").content, "An idea");
+
+	plugin.onRename(moveFile(files, "empty/idea.md", "inbox/idea.md"), "empty/idea.md");
+	plugin.onRename(moveFile(files, "inbox/idea.md", "empty/idea.md"), "inbox/idea.md");
+	plugin.passwordQueue = [folderPw];
+	await plugin.promptMovedIn();
+	assert.ok(isLocked(files.get("empty/idea.md").content));
+});
+
+test("invalid entries in the settings file are dropped on load", async () => {
+	const { app } = createMockApp({});
+	const plugin = new TestEnclavePlugin(app);
+	plugin.persistedData = {
+		settings: {
+			protectedFolders: ["Misc/old style", { path: "ok", scope: "vault" }, { path: "bad", scope: "other" }],
+			vaultCheck: "not a payload",
+		},
+		ledger: [],
+	};
+	await plugin.loadSettings();
+	assert.deepEqual(plugin.settings.protectedFolders, [{ path: "ok", scope: "vault" }]);
+	assert.equal(plugin.settings.vaultCheck, null);
 });

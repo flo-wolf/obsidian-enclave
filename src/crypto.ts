@@ -176,3 +176,29 @@ export async function decryptContent(
 		throw new DecryptError();
 	}
 }
+
+/** Fixed text a password check encrypts; decrypting it back proves a password is the right one. */
+const CHECK_TEXT = "enclave-password-check";
+
+/**
+ * Encrypt a fixed text with `password`, so a password entered later can be
+ * checked against it. It's as hard to brute-force as any locked note, so
+ * storing it reveals nothing a locked note doesn't.
+ */
+export function createPasswordCheck(
+	password: string,
+	scope: EnclaveScope,
+	iterations: number = DEFAULT_ITERATIONS
+): Promise<EnclavePayload> {
+	return encryptContent(CHECK_TEXT, password, scope, iterations);
+}
+
+/** Whether `password` is the one `check` was created with. */
+export async function passwordMatchesCheck(check: EnclavePayload, password: string): Promise<boolean> {
+	try {
+		return (await decryptContent(check, password)) === CHECK_TEXT;
+	} catch (e) {
+		if (e instanceof DecryptError) return false;
+		throw e;
+	}
+}

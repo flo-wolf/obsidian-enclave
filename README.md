@@ -60,6 +60,12 @@ iOS, with the vault.
 - **Separate password**: a password for one note, or one group of notes, that
   should not open with the vault password.
 
+You choose the vault password the first time you lock a note with it. After
+that, a mistyped vault password is rejected right away instead of locking notes
+under a password you didn't mean. The same goes for a folder's separate
+password. Enclave remembers a small encrypted check for each, never the password
+itself (see [Password checks](#password-checks)).
+
 ### Lock and unlock a note
 
 Right-click a note in the file explorer:
@@ -84,7 +90,8 @@ locks every note in it, including subfolders, and keeps the folder locked:
 
 - **A note moved into the folder** brings up a prompt to lock it too. For a
   vault-password folder you confirm; for a separate-password folder you enter
-  that folder's password, which Enclave checks against the notes already in it.
+  that folder's password. Only the folder's own password is accepted, even if
+  notes with other passwords sit in it.
   Moving several notes, or a whole folder, asks once.
 - **A note created in the folder** is locked the first time you leave it.
 - **Renaming or moving the folder** keeps it locked.
@@ -194,6 +201,18 @@ until it is locked again. Enclave keeps that window short:
 If Obsidian crashes while notes are unlocked, Enclave notices on the next start
 and offers **Secure notes left exposed** to encrypt them again.
 
+### Password checks
+
+To recognise a mistyped password, Enclave keeps a check for the vault password
+and for each separate-password folder in its settings file
+(`.obsidian/plugins/enclave/data.json`). A check is a short fixed text encrypted
+with the password, exactly like a note, so it is just as hard to brute-force as
+any locked note and reveals nothing more. The passwords themselves are never
+stored.
+
+If you already had vault notes before checks existed, the vault check is created
+the first time the vault password successfully unlocks one of them.
+
 ### Permanent decryption
 
 Permanently decrypting a note restores it as a normal note and removes it from
@@ -208,6 +227,7 @@ Enclave's tracking. It will not be locked again unless you lock it yourself.
 | Forget vault password after | 30 min | How long the vault password stays in memory. `0` keeps it until Obsidian quits. |
 | Key derivation iterations | 310,000 | PBKDF2 iterations for newly locked notes. Higher is slower to unlock and slower to brute-force. |
 | Verify before overwriting | On | The round-trip check described above. Roughly doubles the time a lock takes. |
+| Vault password | Not set | Whether the vault password has been chosen. **Forget** lets you choose a new one the next time you lock a note; notes already locked keep needing the current one. |
 | Locked folders | None | Folders you've [locked](#lock-a-folder), with their kind of password. The **×** button stops locking new notes there; its notes stay as they are. |
 
 ## Development

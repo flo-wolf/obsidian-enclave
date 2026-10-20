@@ -9,15 +9,17 @@ import {
 	TFolder,
 } from "obsidian";
 import {
+	createPasswordCheck,
 	decryptContent,
 	DecryptError,
 	encryptContent,
 	encryptContentVerified,
 	type EnclavePayload,
 	type EnclaveScope,
+	passwordMatchesCheck,
 	SelfCheckError,
 } from "./crypto";
-import { buildLockedNote, FENCE_LANG, isLocked, parseLockedNote, readScope } from "./format";
+import { buildLockedNote, FENCE_LANG, isLocked, isPayload, parseLockedNote, readScope } from "./format";
 import { ConfirmModal } from "./ConfirmModal";
 import { PasswordModal, type PasswordPromptOptions } from "./PasswordModal";
 import { lockedCardExtension } from "./editor";
@@ -281,9 +283,12 @@ export default class EnclavePlugin extends Plugin {
 		const raw = (await this.loadData()) as Partial<PersistedData> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, raw?.settings);
 		// Drop anything that isn't a valid entry, e.g. from a hand-edited data file.
-		this.settings.protectedFolders = (this.settings.protectedFolders ?? []).filter(
-			(f): f is ProtectedFolder => typeof f?.path === "string" && (f.scope === "vault" || f.scope === "note")
-		);
+		this.settings.protectedFolders = (this.settings.protectedFolders ?? [])
+			.filter(
+				(f): f is ProtectedFolder => typeof f?.path === "string" && (f.scope === "vault" || f.scope === "note")
+			)
+			.map((f) => (isPayload(f.check) ? f : { path: f.path, scope: f.scope }));
+		if (!isPayload(this.settings.vaultCheck)) this.settings.vaultCheck = null;
 		this.startupLedger = normalizeLedger(raw?.ledger);
 	}
 
@@ -608,7 +613,7 @@ export default class EnclavePlugin extends Plugin {
 					iterations: payload.iterations,
 					lastTouched: this.now(),
 				});
-				if (scope === "vault") this.cacheVaultPassword(password);
+				if (scope === "vault") await this.vaultPasswordWorked(password);
 				await this.persist();
 				this.updateStatusBar();
 				new Notice(`Enclave: unlocked "${file.basename}".`);
@@ -679,7 +684,7 @@ export default class EnclavePlugin extends Plugin {
 				}
 				this.unlocked.delete(file.path);
 				this.exposed = this.exposed.filter((e) => e.file.path !== file.path);
-				if (scope === "vault") this.cacheVaultPassword(password);
+				if (scope === "vault") await this.vaultPasswordWorked(password);
 				await this.persist();
 				this.updateStatusBar();
 				new Notice(`Enclave: permanently decrypted "${file.basename}".`);
@@ -907,24 +912,25 @@ export default class EnclavePlugin extends Plugin {
 				break;
 			}
 		}
-		if (hasUnlocked) {
-			// A separate-password folder that already holds such notes keeps their password.
-			const reuse =
-				scope === "note" && !folder.isRoot() && (await this.separatePayloadsIn(folder.path)).length > 0;
-			const password = reuse
-				? () =>
-						this.askFolderPassword(
-							folder.path,
-							`Enter the password the notes in "${folder.path}" are already locked with.`
-						)
-				: undefined;
-			if (!(await this.lockFiles(notes, this.describeFolder(folder), scope, { password }))) return;
-		}
 		if (folder.isRoot()) {
-			if (!hasUnlocked) new Notice("Enclave: no unlocked notes to lock here.");
+			if (hasUnlocked) await this.lockFiles(notes, this.describeFolder(folder), scope);
+			else new Notice("Enclave: no unlocked notes to lock here.");
 			return;
 		}
-		await this.setProtection(folder.path, scope);
+
+		// A separate-password folder gets its password here, once, and keeps a check of it.
+		let folderPassword: string | null = null;
+		const askPassword = async () => (folderPassword = await this.askFolderPassword(folder.path));
+		if (hasUnlocked) {
+			const opts = scope === "note" ? { password: askPassword } : {};
+			if (!(await this.lockFiles(notes, this.describeFolder(folder), scope, opts))) return;
+		} else if (scope === "note" && !(await askPassword())) {
+			return;
+		}
+		const check = folderPassword
+			? await createPasswordCheck(folderPassword, "note", this.settings.iterations)
+			: undefined;
+		await this.setProtection(folder.path, scope, check);
 		if (!hasUnlocked) {
 			new Notice(`Enclave: "${folder.path}" is locked. Notes moved or created there will be locked too.`);
 		}
@@ -999,14 +1005,14 @@ export default class EnclavePlugin extends Plugin {
 	 * never a previously-good cached session password, and never when writes
 	 * merely aborted on concurrent edits.
 	 */
-	private settleVaultPassword(
+	private async settleVaultPassword(
 		bulk: BulkDecrypt,
 		vaultDone: number,
 		issues: { wrongPassword: number; changed: number; failed: number }
-	): void {
+	): Promise<void> {
 		if (!bulk.vaultPassword) return;
 		if (vaultDone > 0) {
-			this.cacheVaultPassword(bulk.vaultPassword);
+			await this.vaultPasswordWorked(bulk.vaultPassword);
 		} else if (!bulk.vaultWasCached && issues.wrongPassword > 0 && issues.changed === 0 && issues.failed === 0) {
 			this.forgetVaultPassword(true);
 		}
@@ -1081,7 +1087,7 @@ export default class EnclavePlugin extends Plugin {
 				});
 				if (!ran) skipped++;
 			}
-			this.settleVaultPassword(bulk, vaultDone, { wrongPassword, changed, failed });
+			await this.settleVaultPassword(bulk, vaultDone, { wrongPassword, changed, failed });
 		} finally {
 			this.bulkActive = false;
 			try {
@@ -1182,7 +1188,7 @@ export default class EnclavePlugin extends Plugin {
 				if (!ran) skipped++;
 			}
 
-			this.settleVaultPassword(bulk, vaultDone, { wrongPassword, changed, failed });
+			await this.settleVaultPassword(bulk, vaultDone, { wrongPassword, changed, failed });
 		} finally {
 			this.bulkActive = false;
 			try {
@@ -1378,21 +1384,56 @@ export default class EnclavePlugin extends Plugin {
 		return new PasswordModal(this.app, opts).open();
 	}
 
+	/**
+	 * The vault password for this session, asking for it if needed. It's chosen
+	 * once (entered twice); after that it's checked against the stored vault
+	 * check, so a typo is rejected instead of locking notes under a new password.
+	 */
 	private async ensureVaultPassword(confirm: boolean): Promise<string | null> {
 		if (this.vaultPassword) {
 			this.vaultPasswordSetAt = this.now();
 			return this.vaultPassword;
 		}
+		const check = this.settings.vaultCheck;
+		const choosing = confirm && !check;
 		const password = await this.promptPassword({
-			title: confirm ? "Set vault password" : "Enter vault password",
-			description: confirm
+			title: choosing ? "Set vault password" : "Enter vault password",
+			description: choosing
 				? "This password unlocks every note locked with the vault default. It is kept in memory only for this session and never written to disk."
-				: "Enter your vault password to unlock this note.",
-			confirm,
+				: `Enter your vault password to ${confirm ? "lock" : "unlock"} this note.`,
+			confirm: choosing,
 			cta: confirm ? "Lock" : "Unlock",
 		});
-		if (password) this.cacheVaultPassword(password);
+		if (!password) return null;
+		if (check && !(await passwordMatchesCheck(check, password))) {
+			new Notice("Enclave: that isn't your vault password.");
+			return null;
+		}
+		if (choosing) await this.saveVaultCheck(password);
+		this.cacheVaultPassword(password);
 		return password;
+	}
+
+	/**
+	 * The vault password just opened a note: keep it for the session, and if no
+	 * vault check exists yet (notes locked before checks existed), create one.
+	 */
+	private async vaultPasswordWorked(password: string): Promise<void> {
+		this.cacheVaultPassword(password);
+		if (!this.settings.vaultCheck) await this.saveVaultCheck(password);
+	}
+
+	private async saveVaultCheck(password: string): Promise<void> {
+		const vaultCheck = await createPasswordCheck(password, "vault", this.settings.iterations);
+		this.settings = { ...this.settings, vaultCheck };
+		await this.persist();
+	}
+
+	/** Forget the vault check, so the next vault password entered becomes the new one. */
+	async resetVaultCheck(): Promise<void> {
+		this.settings = { ...this.settings, vaultCheck: null };
+		this.forgetVaultPassword(true);
+		await this.persist();
 	}
 
 	private cacheVaultPassword(password: string): void {
@@ -1422,10 +1463,11 @@ export default class EnclavePlugin extends Plugin {
 		return match;
 	}
 
-	/** Keep `path` locked with the given kind of password. */
-	private async setProtection(path: string, scope: EnclaveScope): Promise<void> {
+	/** Keep `path` locked with the given kind of password (and, for a separate one, its check). */
+	private async setProtection(path: string, scope: EnclaveScope, check?: EnclavePayload): Promise<void> {
 		const others = this.settings.protectedFolders.filter((f) => f.path !== path);
-		this.settings = { ...this.settings, protectedFolders: [...others, { path, scope }] };
+		const folder: ProtectedFolder = check ? { path, scope, check } : { path, scope };
+		this.settings = { ...this.settings, protectedFolders: [...others, folder] };
 		await this.persist();
 	}
 
@@ -1463,31 +1505,45 @@ export default class EnclavePlugin extends Plugin {
 	}
 
 	/**
-	 * Ask for a separate-password folder's password. If the folder already holds
-	 * separate-password notes, the answer must open one of them, so a typo can't
-	 * leave the folder's notes under different passwords. With none yet, the
-	 * password is entered twice instead. Returns null if cancelled or wrong.
+	 * Ask for a separate-password folder's password. A locked folder keeps a check
+	 * of its password, so only that password is accepted, whatever other notes sit
+	 * inside. A folder being locked for the first time accepts the password of a
+	 * separate-password note already in it, or, with none, a new password entered
+	 * twice. `context` explains why it's asked. Returns null if cancelled or wrong.
 	 */
-	private async askFolderPassword(folderPath: string, description: string): Promise<string | null> {
-		const samples = (await this.separatePayloadsIn(folderPath)).slice(0, 5);
+	private async askFolderPassword(folderPath: string, context?: string): Promise<string | null> {
+		const check = this.settings.protectedFolders.find((f) => f.path === folderPath)?.check;
+		const samples = check ? [] : (await this.separatePayloadsIn(folderPath)).slice(0, 5);
+		const choosing = !check && samples.length === 0;
+		const ask = choosing
+			? `Choose a password for "${folderPath}". Its notes, and notes added to it later, will need it to unlock. There is no recovery.`
+			: `Enter the password the notes in "${folderPath}" are locked with.`;
 		const password = await this.promptPassword({
 			title: `Password for "${folderPath}"`,
-			description,
-			confirm: samples.length === 0,
+			description: context ? `${context} ${ask}` : ask,
+			confirm: choosing,
 			cta: "Lock",
 		});
 		if (!password) return null;
-		if (samples.length === 0) return password;
-		for (const payload of samples) {
+		if (choosing) return password;
+		if (check ? await passwordMatchesCheck(check, password) : await this.opensAny(samples, password)) {
+			return password;
+		}
+		new Notice(`Enclave: that isn't the password for "${folderPath}". Nothing was locked.`);
+		return null;
+	}
+
+	/** Whether `password` decrypts at least one of `payloads`. */
+	private async opensAny(payloads: EnclavePayload[], password: string): Promise<boolean> {
+		for (const payload of payloads) {
 			try {
 				await decryptContent(payload, password);
-				return password;
+				return true;
 			} catch (e) {
 				if (!(e instanceof DecryptError)) throw e;
 			}
 		}
-		new Notice(`Enclave: that isn't the password for "${folderPath}". Nothing was locked.`);
-		return null;
+		return false;
 	}
 
 	/**
@@ -1514,7 +1570,7 @@ export default class EnclavePlugin extends Plugin {
 
 		const password = await this.askFolderPassword(
 			folder.path,
-			`${subject}, which is locked with a separate password. Enter it to lock ${one ? "this note" : "them"} too, or cancel to leave ${one ? "it" : "them"} unlocked.`
+			`${subject}. Lock ${one ? "it" : "them"} too, or cancel to leave ${one ? "it" : "them"} unlocked.`
 		);
 		if (!password) return;
 		await this.lockFiles(files, target, "note", { confirm: false, password: async () => password });

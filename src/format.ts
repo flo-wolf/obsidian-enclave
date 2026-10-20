@@ -78,21 +78,25 @@ export function parseLockedNote(content: string): EnclavePayload | null {
 	const match = normalize(content).match(FENCE_RE);
 	if (!match) return null;
 	try {
-		const payload = JSON.parse(match[1].trim()) as EnclavePayload;
-		if (
-			payload &&
-			payload.alg === "AES-GCM" &&
-			typeof payload.ct === "string" &&
-			payload.ct.length > 0 &&
-			typeof payload.salt === "string" &&
-			typeof payload.iv === "string"
-		) {
-			return payload;
-		}
-		return null;
+		const payload: unknown = JSON.parse(match[1].trim());
+		return isPayload(payload) ? payload : null;
 	} catch {
 		return null;
 	}
+}
+
+/** Whether `value` has the shape of an encrypted payload. */
+export function isPayload(value: unknown): value is EnclavePayload {
+	const payload = value as Partial<EnclavePayload> | null;
+	return (
+		!!payload &&
+		typeof payload === "object" &&
+		payload.alg === "AES-GCM" &&
+		typeof payload.ct === "string" &&
+		payload.ct.length > 0 &&
+		typeof payload.salt === "string" &&
+		typeof payload.iv === "string"
+	);
 }
 
 /** Best-effort read of the declared scope from the leading frontmatter. */

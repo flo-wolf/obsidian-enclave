@@ -1,11 +1,14 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
-import { DEFAULT_ITERATIONS, type EnclaveScope } from "./crypto";
+import { ConfirmModal } from "./ConfirmModal";
+import { DEFAULT_ITERATIONS, type EnclavePayload, type EnclaveScope } from "./crypto";
 import type EnclavePlugin from "./main";
 
 /** A folder kept locked: notes moved or created in it are locked with its kind of password. */
 export interface ProtectedFolder {
 	path: string;
 	scope: EnclaveScope;
+	/** For a separate-password folder: a check its password is verified against. */
+	check?: EnclavePayload;
 }
 
 export interface EnclaveSettings {
@@ -21,6 +24,8 @@ export interface EnclaveSettings {
 	verifyOnLock: boolean;
 	/** Folders kept locked, set by locking a folder. */
 	protectedFolders: ProtectedFolder[];
+	/** A check the vault password is verified against; set when it's first chosen or used. */
+	vaultCheck: EnclavePayload | null;
 }
 
 export const DEFAULT_SETTINGS: EnclaveSettings = {
@@ -32,6 +37,7 @@ export const DEFAULT_SETTINGS: EnclaveSettings = {
 	forgetPasswordMinutes: 30,
 	verifyOnLock: true,
 	protectedFolders: [],
+	vaultCheck: null,
 };
 
 export class EnclaveSettingTab extends PluginSettingTab {
@@ -129,6 +135,32 @@ export class EnclaveSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				})
 			);
+
+		const vaultPassword = new Setting(containerEl)
+			.setName("Vault password")
+			.setDesc(
+				this.plugin.settings.vaultCheck
+					? "Set. A mistyped vault password is rejected right away. Forget it to choose a new vault password the next time you lock a note; notes already locked keep needing the current one."
+					: "Not set yet. You choose it the first time you lock a note with the vault password."
+			);
+		if (this.plugin.settings.vaultCheck) {
+			vaultPassword.addButton((button) =>
+				button
+					.setButtonText("Forget")
+					.setWarning()
+					.onClick(async () => {
+						const confirmed = await new ConfirmModal(this.app, {
+							title: "Forget the vault password?",
+							message:
+								"Enclave will accept the next vault password you enter as the new one. Notes already locked with the current vault password still need it to unlock.",
+							cta: "Forget",
+						}).open();
+						if (!confirmed) return;
+						await this.plugin.resetVaultCheck();
+						this.display();
+					})
+			);
+		}
 
 		new Setting(containerEl)
 			.setName("Locked folders")
