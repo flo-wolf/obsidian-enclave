@@ -18,6 +18,13 @@ export interface ProtectedFolder {
  */
 export type RememberPasswords = "vault" | "all" | "none";
 
+/** The settings that can differ on phones and tablets, as they apply to one device. */
+export interface DeviceSettings {
+	rememberPasswords: RememberPasswords;
+	forgetPasswordMinutes: number;
+	autoLockMinutes: number;
+}
+
 export interface EnclaveSettings {
 	/** PBKDF2 iteration count used when locking new notes. */
 	iterations: number;
@@ -33,6 +40,11 @@ export interface EnclaveSettings {
 	forgetPasswordMinutes: number;
 	/** Which passwords stay in memory between unlocks. */
 	rememberPasswords: RememberPasswords;
+	/** Give phones and tablets their own values for the three mobile* settings below. */
+	mobileOverrides: boolean;
+	mobileRememberPasswords: RememberPasswords;
+	mobileForgetPasswordMinutes: number;
+	mobileAutoLockMinutes: number;
 	/** Verify each note decrypts back to the original before overwriting it. */
 	verifyOnLock: boolean;
 	/** Folders kept locked, set by locking a folder. */
@@ -51,6 +63,10 @@ export const DEFAULT_SETTINGS: EnclaveSettings = {
 	autoLockMinutes: 5,
 	forgetPasswordMinutes: 30,
 	rememberPasswords: "vault",
+	mobileOverrides: false,
+	mobileRememberPasswords: "vault",
+	mobileForgetPasswordMinutes: 30,
+	mobileAutoLockMinutes: 5,
 	verifyOnLock: true,
 	protectedFolders: [],
 	vaultCheck: null,
@@ -96,15 +112,7 @@ export class EnclaveSettingTab extends PluginSettingTab {
 					{
 						name: "Remember passwords for the session",
 						desc: "Which passwords stay in memory after you've entered them. Vault password only: everyday notes open without asking, and notes with a separate password ask every time. Remembered passwords are never written to disk.",
-						control: {
-							type: "dropdown",
-							key: "rememberPasswords",
-							options: {
-								vault: "Vault password only",
-								all: "Vault and separate passwords",
-								none: "Don't remember",
-							},
-						},
+						control: { type: "dropdown", key: "rememberPasswords", options: REMEMBER_OPTIONS },
 					},
 					{
 						name: "Forget passwords after",
@@ -114,6 +122,50 @@ export class EnclaveSettingTab extends PluginSettingTab {
 							type: "number",
 							key: "forgetPasswordMinutes",
 							placeholder: "30",
+							min: 0,
+							max: MAX_MINUTES,
+							validate: (value) => wholeNumberIn(value, 0, MAX_MINUTES),
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Phones and tablets",
+				items: [
+					{
+						name: "Use different settings on phones and tablets",
+						desc: "Give phones and tablets their own values for remembering passwords and auto-locking; the settings above then apply to desktop only. Both sets are stored in the synced settings, so you can change the mobile values from any device.",
+						control: { type: "toggle", key: "mobileOverrides" },
+					},
+					{
+						name: "Remember passwords on mobile",
+						desc: "Which passwords stay in memory on phones and tablets after you've entered them.",
+						visible: () => this.plugin.settings.mobileOverrides,
+						control: { type: "dropdown", key: "mobileRememberPasswords", options: REMEMBER_OPTIONS },
+					},
+					{
+						name: "Forget passwords on mobile after",
+						desc: "Minutes remembered passwords stay in memory on phones and tablets without being used. 0 keeps them until Obsidian quits.",
+						visible: () =>
+							this.plugin.settings.mobileOverrides && this.plugin.settings.mobileRememberPasswords !== "none",
+						control: {
+							type: "number",
+							key: "mobileForgetPasswordMinutes",
+							placeholder: "30",
+							min: 0,
+							max: MAX_MINUTES,
+							validate: (value) => wholeNumberIn(value, 0, MAX_MINUTES),
+						},
+					},
+					{
+						name: "Auto-lock on mobile after inactivity",
+						desc: "Minutes a note may stay unlocked on phones and tablets before it is re-encrypted. 0 disables the timer.",
+						visible: () => this.plugin.settings.mobileOverrides,
+						control: {
+							type: "number",
+							key: "mobileAutoLockMinutes",
+							placeholder: "5",
 							min: 0,
 							max: MAX_MINUTES,
 							validate: (value) => wholeNumberIn(value, 0, MAX_MINUTES),
@@ -196,10 +248,9 @@ export class EnclaveSettingTab extends PluginSettingTab {
 	async setControlValue(key: string, value: unknown): Promise<void> {
 		this.plugin.settings = { ...this.plugin.settings, [key]: value };
 		if (key === "hideLockProperties") this.plugin.applyPropertyHiding();
-		if (key === "rememberPasswords") {
+		if (REMEMBER_KEYS.includes(key)) {
 			// A stricter choice forgets what it no longer allows right away.
-			if (value !== "all") this.plugin.forgetSeparatePasswords();
-			if (value === "none") this.plugin.forgetVaultPassword(true);
+			this.plugin.applyRememberPolicy();
 			this.update();
 		}
 		await this.plugin.saveSettings();
@@ -224,6 +275,16 @@ export class EnclaveSettingTab extends PluginSettingTab {
 		this.update();
 	}
 }
+
+/** Labels for the "remember passwords" choices. */
+const REMEMBER_OPTIONS: Record<RememberPasswords, string> = {
+	vault: "Vault password only",
+	all: "Vault and separate passwords",
+	none: "Don't remember",
+};
+
+/** Settings that change which passwords may stay in memory on this device, or what's shown. */
+const REMEMBER_KEYS = ["rememberPasswords", "mobileOverrides", "mobileRememberPasswords"];
 
 /** Upper bound for the minute settings, so a typo can't mean "practically never". */
 const MAX_MINUTES = 100000;

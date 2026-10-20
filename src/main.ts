@@ -28,6 +28,7 @@ import {
 	DEFAULT_SETTINGS,
 	type EnclaveSettings,
 	EnclaveSettingTab,
+	type DeviceSettings,
 	type ProtectedFolder,
 	type RememberPasswords,
 } from "./settings";
@@ -186,6 +187,33 @@ export default class EnclavePlugin extends Plugin {
 		this.separatePasswords.clear();
 		document.body.removeClass(HIDE_PROPERTIES_CLASS);
 		for (const view of this.markdownViews()) view.containerEl.removeClass(LOCKED_VIEW_CLASS);
+	}
+
+	/**
+	 * The settings that can differ on phones and tablets, resolved for this
+	 * device: the mobile values on mobile when "use different settings" is on,
+	 * the regular ones otherwise.
+	 */
+	device(): DeviceSettings {
+		const s = this.settings;
+		return Platform.isMobile && s.mobileOverrides
+			? {
+					rememberPasswords: s.mobileRememberPasswords,
+					forgetPasswordMinutes: s.mobileForgetPasswordMinutes,
+					autoLockMinutes: s.mobileAutoLockMinutes,
+				}
+			: {
+					rememberPasswords: s.rememberPasswords,
+					forgetPasswordMinutes: s.forgetPasswordMinutes,
+					autoLockMinutes: s.autoLockMinutes,
+				};
+	}
+
+	/** Forget whatever this device's "remember passwords" choice no longer allows. */
+	applyRememberPolicy(): void {
+		const remember = this.device().rememberPasswords;
+		if (remember !== "all") this.forgetSeparatePasswords();
+		if (remember === "none") this.forgetVaultPassword(true);
 	}
 
 	/** Show or hide locked notes' properties box, per the setting (styles.css does the hiding). */
@@ -360,6 +388,9 @@ export default class EnclavePlugin extends Plugin {
 			settings.rememberPasswords = stored?.rememberSeparatePasswords === true ? "all" : "vault";
 		}
 		delete settings.rememberSeparatePasswords;
+		if (!(["vault", "all", "none"] as RememberPasswords[]).includes(settings.mobileRememberPasswords)) {
+			settings.mobileRememberPasswords = DEFAULT_SETTINGS.mobileRememberPasswords;
+		}
 		this.startupLedger = normalizeLedger(raw?.ledger);
 	}
 
@@ -817,7 +848,7 @@ export default class EnclavePlugin extends Plugin {
 		}
 		this.rememberPassword(noteKey(file.path), password);
 		if (
-			this.settings.rememberPasswords === "all" &&
+			this.device().rememberPasswords === "all" &&
 			separateFolder?.check &&
 			(await passwordMatchesCheck(separateFolder.check, password))
 		) {
@@ -1549,7 +1580,7 @@ export default class EnclavePlugin extends Plugin {
 			title: choosing ? "Set vault password" : "Enter vault password",
 			description: choosing
 				? `This password unlocks every note locked with the vault password. ${
-						this.settings.rememberPasswords === "none"
+						this.device().rememberPasswords === "none"
 							? "You'll be asked for it every time you unlock or lock a note."
 							: "Once entered, it's remembered for the session (never written to disk)."
 					} There is no recovery.`
@@ -1605,7 +1636,7 @@ export default class EnclavePlugin extends Plugin {
 
 	/** Keep a separate password in memory, if the setting remembers separate passwords. */
 	private rememberPassword(key: string, password: string): void {
-		if (this.settings.rememberPasswords === "all") {
+		if (this.device().rememberPasswords === "all") {
 			this.separatePasswords.set(key, { password, usedAt: this.now() });
 		}
 	}
@@ -1656,14 +1687,14 @@ export default class EnclavePlugin extends Plugin {
 
 	/** Keep the vault password for the session, unless the setting remembers no passwords. */
 	private cacheVaultPassword(password: string): void {
-		if (this.settings.rememberPasswords === "none") return;
+		if (this.device().rememberPasswords === "none") return;
 		this.vaultPassword = password;
 		this.vaultPasswordSetAt = this.now();
 	}
 
 	/** What happens to a separate password after it's entered, for the prompts that set one. */
 	private separatePasswordHint(): string {
-		return this.settings.rememberPasswords === "all"
+		return this.device().rememberPasswords === "all"
 			? "Once entered, it's remembered for the session like the vault password."
 			: "You'll be asked for it every time you unlock.";
 	}
@@ -1938,8 +1969,9 @@ export default class EnclavePlugin extends Plugin {
 		if (this.bulkActive) return;
 		const now = this.now();
 
-		if (this.settings.autoLockMinutes > 0) {
-			const maxAge = this.settings.autoLockMinutes * 60 * 1000;
+		const { autoLockMinutes, forgetPasswordMinutes } = this.device();
+		if (autoLockMinutes > 0) {
+			const maxAge = autoLockMinutes * 60 * 1000;
 			const active = this.app.workspace.getActiveFile()?.path ?? null;
 			// Snapshot keys: relock() mutates the map mid-iteration.
 			for (const path of Array.from(this.unlocked.keys())) {
@@ -1955,8 +1987,8 @@ export default class EnclavePlugin extends Plugin {
 			}
 		}
 
-		if (this.settings.forgetPasswordMinutes > 0) {
-			const maxAge = this.settings.forgetPasswordMinutes * 60 * 1000;
+		if (forgetPasswordMinutes > 0) {
+			const maxAge = forgetPasswordMinutes * 60 * 1000;
 			if (this.vaultPassword && now - this.vaultPasswordSetAt >= maxAge) this.forgetVaultPassword(true);
 			for (const [key, entry] of Array.from(this.separatePasswords)) {
 				if (now - entry.usedAt >= maxAge) this.separatePasswords.delete(key);

@@ -962,3 +962,88 @@ test("the old 'remember separate passwords' toggle carries over", async () => {
 		assert.equal("rememberSeparatePasswords" in plugin.settings, false);
 	}
 });
+
+/** Run `fn` as if on a phone or tablet. */
+async function onMobile(fn) {
+	Platform.isMobile = true;
+	try {
+		return await fn();
+	} finally {
+		Platform.isMobile = false;
+	}
+}
+
+test("phones and tablets use their own values only when that's turned on", async () => {
+	const { app } = createMockApp({});
+	const plugin = new TestEnclavePlugin(app);
+	Object.assign(plugin.settings, {
+		rememberPasswords: "all",
+		forgetPasswordMinutes: 60,
+		autoLockMinutes: 10,
+		mobileRememberPasswords: "none",
+		mobileForgetPasswordMinutes: 5,
+		mobileAutoLockMinutes: 1,
+	});
+	const desktop = { rememberPasswords: "all", forgetPasswordMinutes: 60, autoLockMinutes: 10 };
+
+	assert.deepEqual(plugin.device(), desktop);
+	assert.deepEqual(await onMobile(() => plugin.device()), desktop, "off: mobile uses the regular values");
+
+	plugin.settings.mobileOverrides = true;
+	assert.deepEqual(plugin.device(), desktop, "desktop is unaffected");
+	assert.deepEqual(await onMobile(() => plugin.device()), {
+		rememberPasswords: "none",
+		forgetPasswordMinutes: 5,
+		autoLockMinutes: 1,
+	});
+});
+
+test("on mobile with its own settings, its remember choice and auto-lock apply", async () => {
+	const vaultPw = "vaultPassword123";
+	const { app, files } = createMockApp({ "a.md": "Note A" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	Object.assign(plugin.settings, {
+		rememberPasswords: "vault",
+		autoLockMinutes: 0,
+		mobileOverrides: true,
+		mobileRememberPasswords: "none",
+		mobileAutoLockMinutes: 1,
+	});
+	let clock = 1_000_000;
+	plugin.now = () => clock;
+
+	await onMobile(async () => {
+		plugin.passwordQueue = [vaultPw, vaultPw];
+		await plugin.lockNote(files.get("a.md"), "vault");
+		assert.equal(plugin.vaultPassword, null, "mobile doesn't remember");
+		await plugin.unlockNote(files.get("a.md"));
+		assert.equal(plugin.prompts, 2);
+
+		clock += 61 * 1000;
+		await plugin.triggerSweep();
+		assert.ok(isLocked(files.get("a.md").content), "mobile's 1-minute auto-lock applied");
+	});
+
+	plugin.passwordQueue = [vaultPw];
+	await plugin.unlockNote(files.get("a.md"));
+	assert.equal(plugin.vaultPassword, vaultPw, "desktop remembers the vault password");
+});
+
+test("switching mobile to a stricter choice forgets what it no longer allows", async () => {
+	const notePw = "noteSecret123";
+	const { plugin, files } = await separateNoteSetup(notePw);
+	plugin.settings.mobileOverrides = true;
+	plugin.settings.mobileRememberPasswords = "all";
+
+	await onMobile(async () => {
+		plugin.passwordQueue = [notePw, notePw];
+		await plugin.unlockNote(files.get("private/a.md"));
+		await plugin.lockAll(true);
+
+		plugin.settings.mobileRememberPasswords = "vault";
+		plugin.applyRememberPolicy();
+		await plugin.unlockNote(files.get("private/a.md"));
+	});
+	assert.equal(plugin.prompts, 2, "the separate password was forgotten");
+});

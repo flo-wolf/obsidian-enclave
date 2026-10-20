@@ -238,6 +238,11 @@ Enclave's tracking. It will not be locked again unless you lock it yourself.
 
 ## Settings
 
+Settings are stored in the vault and sync with it. Phones and tablets can have
+their own values for remembering passwords and auto-locking (see **Use different
+settings on phones and tablets**); both sets sync, so you can change the mobile
+values from your desktop.
+
 | Setting | Default | |
 |---|---|---|
 | Lock when leaving a note | On | Re-lock a note when you switch to another note. |
@@ -246,6 +251,7 @@ Enclave's tracking. It will not be locked again unless you lock it yourself.
 | Auto-lock after inactivity | 5 min | Re-lock idle unlocked notes. `0` turns it off. |
 | Remember passwords for the session | Vault password only | Which passwords stay in memory after you've entered them: the vault password only, the vault and separate passwords, or none. Never written to disk. |
 | Forget passwords after | 30 min | How long remembered passwords stay in memory without being used. `0` keeps them until Obsidian quits. |
+| Use different settings on phones and tablets | Off | Give phones and tablets their own **remember passwords**, **forget passwords after** and **auto-lock after inactivity** values; the regular ones then apply to desktop only. |
 | Key derivation iterations | 310,000 | PBKDF2 iterations for newly locked notes. Higher is slower to unlock and slower to brute-force. |
 | Verify before overwriting | On | The round-trip check described above. Roughly doubles the time a lock takes. |
 | Vault password | Not set | Whether the vault password has been chosen. **Forget** lets you choose a new one the next time you lock a note; see [Changing the vault password](#changing-the-vault-password). |
