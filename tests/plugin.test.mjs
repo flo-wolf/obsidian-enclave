@@ -1047,3 +1047,20 @@ test("switching mobile to a stricter choice forgets what it no longer allows", a
 	});
 	assert.equal(plugin.prompts, 2, "the separate password was forgotten");
 });
+
+test("the settings tab can tell which passwords are in memory", async () => {
+	const notePw = "noteSecret123";
+	const { plugin, files } = await separateNoteSetup(notePw);
+	plugin.settings.rememberPasswords = "all";
+	assert.match(plugin.rememberedPasswordsSummary(), /^No passwords are in memory/);
+
+	plugin.passwordQueue = [notePw];
+	await plugin.unlockNote(files.get("private/a.md"));
+	assert.equal(
+		plugin.rememberedPasswordsSummary(),
+		"In memory on this device: a separate password for 1 note or folder. Forget them to be asked for every password again."
+	);
+
+	plugin.forgetAllPasswords();
+	assert.match(plugin.rememberedPasswordsSummary(), /^No passwords are in memory/);
+});

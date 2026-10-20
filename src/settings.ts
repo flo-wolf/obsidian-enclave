@@ -191,15 +191,27 @@ export class EnclaveSettingTab extends PluginSettingTab {
 					{
 						name: "Vault password",
 						desc: settings.vaultCheck
-							? "Set. A mistyped vault password is rejected right away. Forget it to choose a new vault password the next time you lock a note."
-							: "Not set yet. You choose it the first time you lock a note with the vault password.",
+							? "You've chosen a vault password, so a mistyped one is rejected right away. Change it to choose a new one the next time you lock a note; notes locked with the current one keep opening with it."
+							: "You haven't chosen a vault password yet. You choose it the first time you lock a note with the vault password.",
 						render: (setting) => {
 							if (!settings.vaultCheck) return;
 							setting.addButton((button) =>
 								button
-									.setButtonText("Forget")
+									.setButtonText("Change")
 									.setDestructive()
-									.onClick(() => void this.forgetVaultPassword())
+									.onClick(() => void this.changeVaultPassword())
+							);
+						},
+					},
+					{
+						name: "Remembered passwords",
+						desc: this.plugin.rememberedPasswordsSummary(),
+						render: (setting) => {
+							setting.addButton((button) =>
+								button.setButtonText("Forget now").onClick(() => {
+									this.plugin.forgetAllPasswords();
+									this.update();
+								})
 							);
 						},
 					},
@@ -256,12 +268,12 @@ export class EnclaveSettingTab extends PluginSettingTab {
 		await this.plugin.saveSettings();
 	}
 
-	private async forgetVaultPassword(): Promise<void> {
+	private async changeVaultPassword(): Promise<void> {
 		const confirmed = await new ConfirmModal(this.app, {
-			title: "Forget the vault password?",
+			title: "Change the vault password?",
 			message:
-				"Enclave will accept the next vault password you enter as the new one. Notes already locked with the current one still open with it, and switch to the new one the next time they lock while you're using it.",
-			cta: "Forget",
+				"The next time you lock a note with the vault password, you'll choose a new one. Notes already locked with the current one still open with it, and switch to the new one the next time they lock while you're using it.",
+			cta: "Change",
 		}).ask();
 		if (!confirmed) return;
 		await this.plugin.resetVaultCheck();

@@ -1653,6 +1653,19 @@ export default class EnclavePlugin extends Plugin {
 		}
 	}
 
+	/** Which passwords are in memory on this device, as a description for the settings tab. */
+	rememberedPasswordsSummary(): string {
+		const vault = this.vaultPassword !== null;
+		const separate = this.separatePasswords.size;
+		if (!vault && separate === 0) return "No passwords are in memory on this device right now.";
+		const parts = [
+			...(vault ? ["the vault password"] : []),
+			...(separate === 1 ? ["a separate password for 1 note or folder"] : []),
+			...(separate > 1 ? [`separate passwords for ${separate} notes or folders`] : []),
+		];
+		return `In memory on this device: ${parts.join(" and ")}. Forget them to be asked for every password again.`;
+	}
+
 	forgetSeparatePasswords(): void {
 		this.separatePasswords.clear();
 	}

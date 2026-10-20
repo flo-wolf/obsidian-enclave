@@ -225,7 +225,7 @@ the first time the vault password successfully unlocks one of them.
 
 ### Changing the vault password
 
-**Settings → Vault password → Forget** lets you choose a new vault password the
+**Settings → Vault password → Change** lets you choose a new vault password the
 next time you lock a note. Notes locked with the old one still open with the old
 one: if the new password doesn't open a note, Enclave asks for the earlier
 password. When that note locks again while you're using the new vault password,
@@ -254,7 +254,8 @@ values from your desktop.
 | Use different settings on phones and tablets | Off | Give phones and tablets their own **remember passwords**, **forget passwords after** and **auto-lock after inactivity** values; the regular ones then apply to desktop only. |
 | Key derivation iterations | 310,000 | PBKDF2 iterations for newly locked notes. Higher is slower to unlock and slower to brute-force. |
 | Verify before overwriting | On | The round-trip check described above. Roughly doubles the time a lock takes. |
-| Vault password | Not set | Whether the vault password has been chosen. **Forget** lets you choose a new one the next time you lock a note; see [Changing the vault password](#changing-the-vault-password). |
+| Vault password | Not chosen | Whether you've chosen a vault password. **Change** lets you choose a new one the next time you lock a note; see [Changing the vault password](#changing-the-vault-password). |
+| Remembered passwords | | Which passwords are in memory on this device. **Forget now** removes them all, like the **Forget remembered passwords** command. |
 | Locked folders | None | Folders you've [locked](#lock-a-folder), with their kind of password. Deleting one from the list stops locking new notes there; its notes stay as they are. |
 
 ## Development
