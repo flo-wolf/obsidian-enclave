@@ -24,11 +24,13 @@ export class PasswordModal extends Modal {
 		super(app);
 	}
 
-	open(): Promise<string | null> {
-		super.open();
-		return new Promise((resolve) => {
+	/** Open the modal and wait for the answer: the password, or null if cancelled. */
+	ask(): Promise<string | null> {
+		const answer = new Promise<string | null>((resolve) => {
 			this.resolver = resolve;
 		});
+		this.open();
+		return answer;
 	}
 
 	onOpen(): void {

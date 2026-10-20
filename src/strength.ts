@@ -49,7 +49,7 @@ export function estimateStrength(password: string): StrengthResult {
 	if (len < 12) score = Math.min(score, 2);
 	if (len < 8) score = Math.min(score, 1);
 	if (len < 5) score = 0;
-	score = Math.max(0, Math.min(4, score)) as StrengthResult["score"];
+	score = Math.max(0, Math.min(4, score));
 
 	return { score: score as StrengthResult["score"], label: LABELS[score] };
 }

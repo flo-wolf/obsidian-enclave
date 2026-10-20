@@ -70,7 +70,7 @@ class CardWidget extends WidgetType {
 	}
 
 	toDOM(): HTMLElement {
-		const el = document.createElement("div");
+		const el = createDiv();
 		this.render(el, this.source, this.path);
 		return el;
 	}

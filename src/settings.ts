@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, type SettingDefinitionItem } from "obsidian";
 import { ConfirmModal } from "./ConfirmModal";
 import { DEFAULT_ITERATIONS, type EnclavePayload, type EnclaveScope } from "./crypto";
 import type EnclavePlugin from "./main";
@@ -47,196 +47,167 @@ export const DEFAULT_SETTINGS: EnclaveSettings = {
 };
 
 export class EnclaveSettingTab extends PluginSettingTab {
-	constructor(app: App, private plugin: EnclavePlugin) {
+	constructor(
+		app: App,
+		private plugin: EnclavePlugin
+	) {
 		super(app, plugin);
 	}
 
-	display(): void {
-		const { containerEl } = this;
-		containerEl.empty();
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		const settings = this.plugin.settings;
+		return [
+			{
+				type: "group",
+				heading: "Locking",
+				items: [
+					{
+						name: "Lock when leaving a note",
+						desc: "Re-encrypt a note as soon as you switch to another note. Strongly recommended — while a note is unlocked its plaintext is written to disk.",
+						control: { type: "toggle", key: "autoLockOnClose" },
+					},
+					{
+						name: "Lock when Obsidian is hidden",
+						desc: "Desktop only: re-encrypt unlocked notes when you minimize Obsidian or switch to another space or full-screen app. Quitting Obsidian always locks. On iOS and Android, notes always lock when the app goes to the background, since that's the last reliable moment to do it there.",
+						control: { type: "toggle", key: "lockWhenHidden" },
+					},
+					{
+						name: "Auto-lock after inactivity",
+						desc: "Minutes a note may stay unlocked before it is re-encrypted. 0 disables the timer.",
+						control: {
+							type: "number",
+							key: "autoLockMinutes",
+							placeholder: "5",
+							min: 0,
+							max: MAX_MINUTES,
+							validate: (value) => wholeNumberIn(value, 0, MAX_MINUTES),
+						},
+					},
+					{
+						name: "Forget vault password after",
+						desc: "Minutes the vault password stays in memory. After this you'll be asked again on the next unlock. 0 keeps it until Obsidian quits.",
+						control: {
+							type: "number",
+							key: "forgetPasswordMinutes",
+							placeholder: "30",
+							min: 0,
+							max: MAX_MINUTES,
+							validate: (value) => wholeNumberIn(value, 0, MAX_MINUTES),
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Display",
+				items: [
+					{
+						name: "Hide properties of locked notes",
+						desc: "Hide the properties box on locked notes. It only shows Enclave's own locked and lock-scope properties; the note's real properties are encrypted with the rest of it.",
+						control: { type: "toggle", key: "hideLockProperties" },
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Passwords and encryption",
+				items: [
+					{
+						name: "Vault password",
+						desc: settings.vaultCheck
+							? "Set. A mistyped vault password is rejected right away. Forget it to choose a new vault password the next time you lock a note."
+							: "Not set yet. You choose it the first time you lock a note with the vault password.",
+						render: (setting) => {
+							if (!settings.vaultCheck) return;
+							setting.addButton((button) =>
+								button
+									.setButtonText("Forget")
+									.setDestructive()
+									.onClick(() => void this.forgetVaultPassword())
+							);
+						},
+					},
+					{
+						name: "Key derivation iterations",
+						desc: "PBKDF2 iterations used when locking new notes. Higher is slower but more resistant to brute force. Existing locked notes keep the value they were locked with.",
+						control: {
+							type: "number",
+							key: "iterations",
+							placeholder: String(DEFAULT_ITERATIONS),
+							min: MIN_ITERATIONS,
+							max: MAX_ITERATIONS,
+							validate: (value) => wholeNumberIn(value, MIN_ITERATIONS, MAX_ITERATIONS),
+						},
+					},
+					{
+						name: "Verify before overwriting",
+						desc: "After encrypting, decrypt the result and confirm it matches the original before replacing the note. Strongly recommended — prevents a faulty lock from destroying content. Roughly doubles lock time.",
+						control: { type: "toggle", key: "verifyOnLock" },
+					},
+					{
+						name: "There is no password recovery",
+						desc: "If you forget a password, the notes locked with it can't be decrypted. Keep backups of important notes. You can permanently decrypt a note or folder at any time with its password.",
+					},
+				],
+			},
+			{
+				type: "list",
+				heading: "Locked folders",
+				emptyState: "None yet. Right-click a folder → Enclave: lock folder.",
+				items: settings.protectedFolders.map((folder) => ({
+					name: folder.path,
+					desc: folder.scope === "note" ? "Separate password" : "Vault password",
+				})),
+				// Deleting stops locking new notes there; its notes stay as they are.
+				onDelete: (index) => void this.unprotect(index),
+			},
+		];
+	}
 
-		new Setting(containerEl)
-			.setName("Lock when leaving a note")
-			.setDesc(
-				"Re-encrypt a note as soon as you switch to another note. Strongly recommended — while a note is unlocked its plaintext is written to disk."
-			)
-			.addToggle((toggle) =>
-				toggle.setValue(this.plugin.settings.autoLockOnClose).onChange(async (value) => {
-					this.plugin.settings.autoLockOnClose = value;
-					await this.plugin.saveSettings();
-				})
-			);
+	/**
+	 * Settings live inside the plugin's data file next to its crash-recovery
+	 * ledger, so they're saved through the plugin rather than the default, which
+	 * would overwrite the whole file with the settings alone.
+	 */
+	async setControlValue(key: string, value: unknown): Promise<void> {
+		this.plugin.settings = { ...this.plugin.settings, [key]: value };
+		if (key === "hideLockProperties") this.plugin.applyPropertyHiding();
+		await this.plugin.saveSettings();
+	}
 
-		new Setting(containerEl)
-			.setName("Lock when Obsidian is hidden")
-			.setDesc(
-				"Desktop only: re-encrypt unlocked notes when you minimize Obsidian or switch to another space or full-screen app. Quitting Obsidian always locks. On iOS and Android, notes always lock when the app goes to the background, since that's the last reliable moment to do it there."
-			)
-			.addToggle((toggle) =>
-				toggle.setValue(this.plugin.settings.lockWhenHidden).onChange(async (value) => {
-					this.plugin.settings.lockWhenHidden = value;
-					await this.plugin.saveSettings();
-				})
-			);
+	private async forgetVaultPassword(): Promise<void> {
+		const confirmed = await new ConfirmModal(this.app, {
+			title: "Forget the vault password?",
+			message:
+				"Enclave will accept the next vault password you enter as the new one. Notes already locked with the current one still open with it, and switch to the new one the next time they lock while you're using it.",
+			cta: "Forget",
+		}).ask();
+		if (!confirmed) return;
+		await this.plugin.resetVaultCheck();
+		this.update();
+	}
 
-		new Setting(containerEl)
-			.setName("Hide properties of locked notes")
-			.setDesc(
-				"Hide the properties box on locked notes. It only shows Enclave's own locked and lock-scope properties; the note's real properties are encrypted with the rest of it."
-			)
-			.addToggle((toggle) =>
-				toggle.setValue(this.plugin.settings.hideLockProperties).onChange(async (value) => {
-					this.plugin.settings.hideLockProperties = value;
-					this.plugin.applyPropertyHiding();
-					await this.plugin.saveSettings();
-				})
-			);
-
-		new Setting(containerEl)
-			.setName("Auto-lock after inactivity")
-			.setDesc("Minutes a note may stay unlocked before it is re-encrypted. 0 disables the timer.")
-			.addText((text) => {
-				text
-					.setPlaceholder("5")
-					.setValue(String(this.plugin.settings.autoLockMinutes))
-					.onChange(async (value) => {
-						const n = parseBoundedInt(value, 0, 100000);
-						if (n === null) return; // ignore invalid/partial input; keep prior value
-						this.plugin.settings.autoLockMinutes = n;
-						await this.plugin.saveSettings();
-					});
-				// On blur, snap back to the saved value so invalid input is visibly rejected.
-				text.inputEl.addEventListener("blur", () =>
-					text.setValue(String(this.plugin.settings.autoLockMinutes))
-				);
-			});
-
-		new Setting(containerEl)
-			.setName("Forget vault password after")
-			.setDesc(
-				"Minutes the vault password stays cached in memory. After this you'll be asked again on the next unlock. 0 keeps it until Obsidian quits."
-			)
-			.addText((text) => {
-				text
-					.setPlaceholder("30")
-					.setValue(String(this.plugin.settings.forgetPasswordMinutes))
-					.onChange(async (value) => {
-						// Crucially, do NOT collapse invalid input to 0 — that would
-						// silently switch off password expiry (a security downgrade).
-						const n = parseBoundedInt(value, 0, 100000);
-						if (n === null) return;
-						this.plugin.settings.forgetPasswordMinutes = n;
-						await this.plugin.saveSettings();
-					});
-				text.inputEl.addEventListener("blur", () =>
-					text.setValue(String(this.plugin.settings.forgetPasswordMinutes))
-				);
-			});
-
-		new Setting(containerEl)
-			.setName("Key derivation iterations")
-			.setDesc(
-				"PBKDF2 iterations used when locking new notes. Higher is slower but more resistant to brute force. Existing locked notes keep the value they were locked with."
-			)
-			.addText((text) => {
-				text
-					.setPlaceholder(String(DEFAULT_ITERATIONS))
-					.setValue(String(this.plugin.settings.iterations))
-					.onChange(async (value) => {
-						// Reject sub-floor / absurd values rather than snapping silently;
-						// an upper bound prevents a typo from freezing the UI on next lock.
-						const n = parseBoundedInt(value, 100000, 10000000);
-						if (n === null) return;
-						this.plugin.settings.iterations = n;
-						await this.plugin.saveSettings();
-					});
-				text.inputEl.addEventListener("blur", () =>
-					text.setValue(String(this.plugin.settings.iterations))
-				);
-			});
-
-		new Setting(containerEl)
-			.setName("Verify before overwriting")
-			.setDesc(
-				"After encrypting, decrypt the result and confirm it matches the original before replacing the note. Strongly recommended — prevents a faulty lock from destroying content. Roughly doubles lock time."
-			)
-			.addToggle((toggle) =>
-				toggle.setValue(this.plugin.settings.verifyOnLock).onChange(async (value) => {
-					this.plugin.settings.verifyOnLock = value;
-					await this.plugin.saveSettings();
-				})
-			);
-
-		const vaultPassword = new Setting(containerEl)
-			.setName("Vault password")
-			.setDesc(
-				this.plugin.settings.vaultCheck
-					? "Set. A mistyped vault password is rejected right away. Forget it to choose a new vault password the next time you lock a note."
-					: "Not set yet. You choose it the first time you lock a note with the vault password."
-			);
-		if (this.plugin.settings.vaultCheck) {
-			vaultPassword.addButton((button) =>
-				button
-					.setButtonText("Forget")
-					.setWarning()
-					.onClick(async () => {
-						const confirmed = await new ConfirmModal(this.app, {
-							title: "Forget the vault password?",
-							message:
-								"Enclave will accept the next vault password you enter as the new one. Notes already locked with the current one still open with it, and switch to the new one the next time they lock while you're using it.",
-							cta: "Forget",
-						}).open();
-						if (!confirmed) return;
-						await this.plugin.resetVaultCheck();
-						this.display();
-					})
-			);
-		}
-
-		new Setting(containerEl)
-			.setName("Locked folders")
-			.setDesc(
-				"Folders you've locked. A note moved into one is offered to be locked with the folder's password; a note created in one is locked when you leave it. Permanently decrypting a folder removes it from this list."
-			)
-			.setHeading();
-		if (this.plugin.settings.protectedFolders.length === 0) {
-			containerEl.createEl("p", {
-				cls: "setting-item-description",
-				text: "None yet. Right-click a folder → Enclave: lock folder.",
-			});
-		}
-		for (const folder of this.plugin.settings.protectedFolders) {
-			new Setting(containerEl)
-				.setName(folder.path)
-				.setDesc(folder.scope === "note" ? "Separate password" : "Vault password")
-				.addExtraButton((button) =>
-					button
-						.setIcon("x")
-						.setTooltip("Stop locking new notes in this folder. Its notes stay as they are.")
-						.onClick(async () => {
-							await this.plugin.unprotectFolder(folder.path);
-							this.display();
-						})
-				);
-		}
-
-		const warn = containerEl.createEl("div", { cls: "enclave-settings-warning" });
-		warn.createEl("strong", { text: "Heads up: " });
-		warn.appendText(
-			"There is no password recovery. If you forget a password, the encrypted note cannot be decrypted. Keep backups of important notes. You can permanently decrypt a note or vault at any time with its password to permanently remove encryption."
-		);
+	private async unprotect(index: number): Promise<void> {
+		const folder = this.plugin.settings.protectedFolders[index];
+		if (!folder) return;
+		await this.plugin.unprotectFolder(folder.path);
+		this.update();
 	}
 }
 
+/** Upper bound for the minute settings, so a typo can't mean "practically never". */
+const MAX_MINUTES = 100000;
+/** Bounds for PBKDF2 iterations: a floor for security, a ceiling so a typo can't freeze locking. */
+const MIN_ITERATIONS = 100000;
+const MAX_ITERATIONS = 10000000;
+
 /**
- * Parse an integer within [min, max]. Returns null for empty/invalid/out-of-range
- * input so callers can leave the previous (valid) value untouched rather than
- * snapping to a default — important because for some fields a wrong default (0)
- * silently weakens security.
+ * Validation message unless `value` is a whole number in [min, max]. Invalid
+ * input is rejected rather than snapped to a default, since for some fields a
+ * wrong default (0) would silently weaken security.
  */
-function parseBoundedInt(value: string, min: number, max: number): number | null {
-	if (!/^\d+$/.test(value.trim())) return null;
-	const n = Number.parseInt(value, 10);
-	if (!Number.isInteger(n) || n < min || n > max) return null;
-	return n;
+function wholeNumberIn(value: number, min: number, max: number): string | void {
+	if (!Number.isInteger(value) || value < min || value > max) {
+		return `Enter a whole number from ${min.toLocaleString()} to ${max.toLocaleString()}.`;
+	}
 }

@@ -27,6 +27,8 @@ in the graph.
 
 ## Installation
 
+Enclave needs Obsidian 1.13 or later.
+
 Enclave is not listed in the Obsidian community plugin directory. Install it in
 one of two ways.
 
@@ -240,7 +242,7 @@ Enclave's tracking. It will not be locked again unless you lock it yourself.
 | Key derivation iterations | 310,000 | PBKDF2 iterations for newly locked notes. Higher is slower to unlock and slower to brute-force. |
 | Verify before overwriting | On | The round-trip check described above. Roughly doubles the time a lock takes. |
 | Vault password | Not set | Whether the vault password has been chosen. **Forget** lets you choose a new one the next time you lock a note; see [Changing the vault password](#changing-the-vault-password). |
-| Locked folders | None | Folders you've [locked](#lock-a-folder), with their kind of password. The **×** button stops locking new notes there; its notes stay as they are. |
+| Locked folders | None | Folders you've [locked](#lock-a-folder), with their kind of password. Deleting one from the list stops locking new notes there; its notes stay as they are. |
 
 ## Development
 

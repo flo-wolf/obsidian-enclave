@@ -31,6 +31,9 @@ const SWEEP_INTERVAL_MS = 30 * 1000;
 /** Body class that hides the properties box of locked notes (see styles.css). */
 const HIDE_PROPERTIES_CLASS = "enclave-hide-lock-properties";
 
+/** Class on the view of a locked note, editing or reading (see styles.css). */
+const LOCKED_VIEW_CLASS = "enclave-locked-note";
+
 /** How long to gather notes moved into protected folders before asking once about all of them. */
 const MOVE_BATCH_MS = 500;
 
@@ -155,6 +158,7 @@ export default class EnclavePlugin extends Plugin {
 
 		this.app.workspace.onLayoutReady(() => {
 			this.lastActiveFile = this.app.workspace.getActiveFile()?.path ?? null;
+			this.markLockedViews();
 			void this.recoverExposedNotes();
 			// Registered after layout-ready: Obsidian fires "create" for every file while loading the vault.
 			this.registerEvent(this.app.vault.on("create", (file) => this.onCreate(file)));
@@ -168,11 +172,35 @@ export default class EnclavePlugin extends Plugin {
 		void this.lockAll(true);
 		this.vaultPassword = null;
 		document.body.removeClass(HIDE_PROPERTIES_CLASS);
+		for (const view of this.markdownViews()) view.containerEl.removeClass(LOCKED_VIEW_CLASS);
 	}
 
 	/** Show or hide locked notes' properties box, per the setting (styles.css does the hiding). */
 	applyPropertyHiding(): void {
 		document.body.toggleClass(HIDE_PROPERTIES_CLASS, this.settings.hideLockProperties);
+	}
+
+	/** Every open Markdown view. */
+	private markdownViews(): MarkdownView[] {
+		return this.app.workspace
+			.getLeavesOfType("markdown")
+			.map((leaf) => leaf.view)
+			.filter((view): view is MarkdownView => view instanceof MarkdownView);
+	}
+
+	/**
+	 * Mark the open views of locked notes, so styles.css can hide their
+	 * properties box in editing and reading view. Uses Obsidian's parsed
+	 * frontmatter, which is updated after every lock and unlock.
+	 */
+	private markLockedViews(): void {
+		for (const view of this.markdownViews()) {
+			const frontmatter = view.file ? this.app.metadataCache.getFileCache(view.file)?.frontmatter : undefined;
+			const locked =
+				frontmatter?.locked === true &&
+				(frontmatter["lock-scope"] === "vault" || frontmatter["lock-scope"] === "note");
+			view.containerEl.toggleClass(LOCKED_VIEW_CLASS, locked);
+		}
 	}
 
 	private registerCommands(): void {
@@ -259,6 +287,11 @@ export default class EnclavePlugin extends Plugin {
 		// switches to non-file views / closing the last tab, which leaf-change catches.
 		this.registerEvent(this.app.workspace.on("file-open", () => this.handleActiveChange()));
 		this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.handleActiveChange()));
+
+		// Keep the "locked note" class on views in step with what they show.
+		this.registerEvent(this.app.workspace.on("file-open", () => this.markLockedViews()));
+		this.registerEvent(this.app.workspace.on("layout-change", () => this.markLockedViews()));
+		this.registerEvent(this.app.metadataCache.on("changed", () => this.markLockedViews()));
 
 		this.registerEvent(this.app.vault.on("rename", (file, oldPath) => this.onRename(file, oldPath)));
 		this.registerEvent(
@@ -855,7 +888,7 @@ export default class EnclavePlugin extends Plugin {
 						: ""
 				}${extra}`,
 			cta: verb.includes("decrypt") ? "Permanently Decrypt" : "Proceed",
-		}).open();
+		}).ask();
 	}
 
 	private describeFolder(folder: TFolder): string {
@@ -994,7 +1027,7 @@ export default class EnclavePlugin extends Plugin {
 			title: `Enclave: lock folder "${path}"?`,
 			message: `${now} The folder then stays locked: notes moved into it or created in it are locked with ${password} too. Notes that are already locked keep their own password.`,
 			cta: "Lock folder",
-		}).open();
+		}).ask();
 	}
 
 	/**
@@ -1435,7 +1468,7 @@ export default class EnclavePlugin extends Plugin {
 
 	/** Indirection point so tests can supply passwords without UI. */
 	protected promptPassword(opts: PasswordPromptOptions): Promise<string | null> {
-		return new PasswordModal(this.app, opts).open();
+		return new PasswordModal(this.app, opts).ask();
 	}
 
 	/**
@@ -1742,7 +1775,7 @@ export default class EnclavePlugin extends Plugin {
 
 	/** Confirmation for locking notes moved into a vault-password folder. Overridable for tests. */
 	protected confirmMoveIn(message: string): Promise<boolean> {
-		return new ConfirmModal(this.app, { title: "Enclave: lock moved notes?", message, cta: "Lock" }).open();
+		return new ConfirmModal(this.app, { title: "Enclave: lock moved notes?", message, cta: "Lock" }).ask();
 	}
 
 	// ---- events & timers ------------------------------------------------

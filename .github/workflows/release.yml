@@ -10,6 +10,9 @@ on:
 
 permissions:
   contents: write
+  # For the build provenance attestation below.
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -34,6 +37,19 @@ jobs:
             echo "::error::Tag '${GITHUB_REF_NAME}' does not match manifest version '${MANIFEST_VERSION}'."
             exit 1
           fi
+
+      # Lets anyone verify the release files were built from this repository
+      # (gh attestation verify main.js -R <owner>/<repo>). GitHub only offers
+      # attestations for public repositories on regular plans, so it's skipped
+      # while the repository is private.
+      - name: Attest build provenance
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
 
       - name: Create release
         env:

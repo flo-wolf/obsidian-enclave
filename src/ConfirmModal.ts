@@ -12,11 +12,13 @@ export class ConfirmModal extends Modal {
 		super(app);
 	}
 
-	open(): Promise<boolean> {
-		super.open();
-		return new Promise((resolve) => {
+	/** Open the modal and wait for the answer: true if confirmed. */
+	ask(): Promise<boolean> {
+		const answer = new Promise<boolean>((resolve) => {
 			this.resolver = resolve;
 		});
+		this.open();
+		return answer;
 	}
 
 	onOpen(): void {
