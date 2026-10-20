@@ -12,8 +12,9 @@ data.json
 # local test vault (sample notes + symlinked plugin)
 test-vault/
 
-# local developer documentation (not shipped / not tracked)
-docs/
+# local developer documentation (not shipped / not tracked), except the user guide
+docs/*
+!docs/guide.md
 
 # excluded per workspace policy
 .notes/
