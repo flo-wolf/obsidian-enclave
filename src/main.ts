@@ -23,7 +23,7 @@ import {
 import { buildLockedNote, FENCE_LANG, isLocked, isPayload, parseLockedNote, readScope } from "./format";
 import { ConfirmModal } from "./ConfirmModal";
 import { PasswordModal, type PasswordPromptOptions } from "./PasswordModal";
-import { lockedCardExtension } from "./editor";
+import { lockedCardExtension, lockedNoteReadOnly } from "./editor";
 import { DEFAULT_SETTINGS, type EnclaveSettings, EnclaveSettingTab, type ProtectedFolder } from "./settings";
 
 const SWEEP_INTERVAL_MS = 30 * 1000;
@@ -63,7 +63,6 @@ interface LockedSet {
 interface BulkDecrypt {
 	work: (LockedNote & { scope: EnclaveScope; password: string })[];
 	vaultPassword: string | null;
-	vaultWasCached: boolean;
 	/** Separate-password notes left alone because that prompt was cancelled. */
 	skippedSeparate: number;
 }
@@ -109,6 +108,9 @@ export default class EnclavePlugin extends Plugin {
 	 */
 	private protectedBeforeRename: ProtectedFolder[] = [];
 
+	/** When the "this note is locked" hint was last shown, so typing doesn't flood notices. */
+	private lastLockedEditNotice = 0;
+
 	/** Ledger read at startup, and notes found still exposed (plaintext) after a crash. */
 	private startupLedger: LedgerEntry[] = [];
 	private exposed: { file: TFile; scope: EnclaveScope }[] = [];
@@ -128,7 +130,10 @@ export default class EnclavePlugin extends Plugin {
 		this.registerMarkdownCodeBlockProcessor(FENCE_LANG, (source, el, ctx) =>
 			this.renderLockedCard(el, source, ctx.sourcePath)
 		);
-		this.registerEditorExtension(lockedCardExtension((el, source, path) => this.renderLockedCard(el, source, path)));
+		this.registerEditorExtension([
+			lockedCardExtension((el, source, path) => this.renderLockedCard(el, source, path)),
+			lockedNoteReadOnly(() => this.notifyLockedEdit()),
+		]);
 
 		this.statusBarEl = this.addStatusBarItem();
 		this.statusBarEl.addClass("enclave-status");
@@ -592,18 +597,15 @@ export default class EnclavePlugin extends Plugin {
 			}
 
 			const scope = payload.scope ?? readScope(content);
-			const password =
-				scope === "note"
-					? await this.promptPassword({
-							title: "Unlock note",
-							description: `Enter the password for "${file.basename}".`,
-							cta: "Unlock",
-						})
-					: await this.ensureVaultPassword(false);
-			if (!password) return;
+			const opened = await this.openLockedNote(file, payload, scope, {
+				title: "Unlock note",
+				description: `Enter the password for "${file.basename}".`,
+				cta: "Unlock",
+			});
+			if (!opened) return;
+			const { plaintext, password } = opened;
 
 			try {
-				const plaintext = await decryptContent(payload, password);
 				const written = await this.writeContent(file, content, plaintext);
 				if (!written) {
 					new Notice(`Enclave: "${file.basename}" changed while unlocking — try again.`);
@@ -620,13 +622,8 @@ export default class EnclavePlugin extends Plugin {
 				this.updateStatusBar();
 				new Notice(`Enclave: unlocked "${file.basename}".`);
 			} catch (e) {
-				if (e instanceof DecryptError) {
-					new Notice("Enclave: incorrect password.");
-					if (scope === "vault") this.forgetVaultPassword(true);
-				} else {
-					console.error("Enclave: failed to unlock note", e);
-					new Notice("Enclave: failed to unlock note. See console for details.");
-				}
+				console.error("Enclave: failed to unlock note", e);
+				new Notice("Enclave: failed to unlock note. See console for details.");
 			}
 		});
 		if (!ran) new Notice("Enclave: that note is busy — try again in a moment.");
@@ -667,18 +664,15 @@ export default class EnclavePlugin extends Plugin {
 			}
 
 			const scope = payload.scope ?? readScope(content);
-			const password =
-				scope === "note"
-					? await this.promptPassword({
-							title: "Permanently decrypt note",
-							description: `Enter the password for "${file.basename}" to permanently remove encryption and restore plaintext.`,
-							cta: "Permanently Decrypt",
-						})
-					: await this.ensureVaultPassword(false);
-			if (!password) return;
+			const opened = await this.openLockedNote(file, payload, scope, {
+				title: "Permanently decrypt note",
+				description: `Enter the password for "${file.basename}" to permanently remove encryption and restore plaintext.`,
+				cta: "Permanently Decrypt",
+			});
+			if (!opened) return;
+			const { plaintext, password } = opened;
 
 			try {
-				const plaintext = await decryptContent(payload, password);
 				const written = await this.writeContent(file, content, plaintext);
 				if (!written) {
 					new Notice(`Enclave: "${file.basename}" changed while decrypting — try again.`);
@@ -691,16 +685,52 @@ export default class EnclavePlugin extends Plugin {
 				this.updateStatusBar();
 				new Notice(`Enclave: permanently decrypted "${file.basename}".`);
 			} catch (e) {
-				if (e instanceof DecryptError) {
-					new Notice("Enclave: incorrect password.");
-					if (scope === "vault") this.forgetVaultPassword(true);
-				} else {
-					console.error("Enclave: failed to permanently decrypt note", e);
-					new Notice("Enclave: failed to permanently decrypt note. See console for details.");
-				}
+				console.error("Enclave: failed to permanently decrypt note", e);
+				new Notice("Enclave: failed to permanently decrypt note. See console for details.");
 			}
 		});
 		if (!ran) new Notice("Enclave: that note is busy — try again in a moment.");
+	}
+
+	/**
+	 * Decrypt a locked note, asking for its password. A separate-password note asks
+	 * for its own. A vault note uses the vault password; if the current vault
+	 * password doesn't open it, the note was locked before the vault password was
+	 * changed, so the earlier one is asked for. Reports a wrong password itself
+	 * and returns null then, or when cancelled.
+	 */
+	private async openLockedNote(
+		file: TFile,
+		payload: EnclavePayload,
+		scope: EnclaveScope,
+		ask: PasswordPromptOptions
+	): Promise<{ plaintext: string; password: string } | null> {
+		let password = scope === "note" ? await this.promptPassword(ask) : await this.ensureVaultPassword(false);
+		if (!password) return null;
+		let plaintext = await this.tryDecrypt(payload, password);
+		if (plaintext === null && scope === "vault" && (await this.isCurrentVaultPassword(password))) {
+			password = await this.promptPassword({
+				...ask,
+				description: `"${file.basename}" was locked with a vault password you've since changed. Enter that earlier password.`,
+			});
+			if (!password) return null;
+			plaintext = await this.tryDecrypt(payload, password);
+		}
+		if (plaintext === null) {
+			new Notice("Enclave: incorrect password.");
+			return null;
+		}
+		return { plaintext, password };
+	}
+
+	/** Decrypt `payload`, or null if `password` is wrong. */
+	private async tryDecrypt(payload: EnclavePayload, password: string): Promise<string | null> {
+		try {
+			return await decryptContent(payload, password);
+		} catch (e) {
+			if (e instanceof DecryptError) return null;
+			throw e;
+		}
 	}
 
 	/** Re-encrypt a note that was previously unlocked, using its stored password. */
@@ -727,7 +757,8 @@ export default class EnclavePlugin extends Plugin {
 
 			// For vault-scoped notes prefer the CURRENT cached vault password, so an
 			// auto-lock always matches the user's live vault password rather than a
-			// stale snapshot captured at unlock time.
+			// stale snapshot captured at unlock time. A note opened with an earlier
+			// vault password thereby moves to the current one.
 			const password =
 				info.scope === "vault" ? this.vaultPassword ?? info.password : info.password;
 
@@ -970,7 +1001,6 @@ export default class EnclavePlugin extends Plugin {
 	 * separate prompt only skips those notes. Returns null if nothing is left to do.
 	 */
 	private async prepareBulkDecrypt(set: LockedSet, action: string, cta: string): Promise<BulkDecrypt | null> {
-		const vaultWasCached = this.vaultPassword !== null;
 		let vaultPassword: string | null = null;
 		if (set.vault.length > 0) {
 			vaultPassword = await this.ensureVaultPassword(false);
@@ -996,28 +1026,13 @@ export default class EnclavePlugin extends Plugin {
 		return {
 			work,
 			vaultPassword,
-			vaultWasCached,
 			skippedSeparate: notePassword ? 0 : set.note.length,
 		};
 	}
 
-	/**
-	 * After a bulk decrypt: keep a vault password that worked, and drop a freshly
-	 * entered one only when the failures were clearly authentication failures —
-	 * never a previously-good cached session password, and never when writes
-	 * merely aborted on concurrent edits.
-	 */
-	private async settleVaultPassword(
-		bulk: BulkDecrypt,
-		vaultDone: number,
-		issues: { wrongPassword: number; changed: number; failed: number }
-	): Promise<void> {
-		if (!bulk.vaultPassword) return;
-		if (vaultDone > 0) {
-			await this.vaultPasswordWorked(bulk.vaultPassword);
-		} else if (!bulk.vaultWasCached && issues.wrongPassword > 0 && issues.changed === 0 && issues.failed === 0) {
-			this.forgetVaultPassword(true);
-		}
+	/** After a bulk decrypt: a vault password that opened notes may be kept for the session. */
+	private async settleVaultPassword(bulk: BulkDecrypt, vaultDone: number): Promise<void> {
+		if (bulk.vaultPassword && vaultDone > 0) await this.vaultPasswordWorked(bulk.vaultPassword);
 	}
 
 	/** Suffix for a bulk summary when the separate-password prompt was cancelled. */
@@ -1089,7 +1104,7 @@ export default class EnclavePlugin extends Plugin {
 				});
 				if (!ran) skipped++;
 			}
-			await this.settleVaultPassword(bulk, vaultDone, { wrongPassword, changed, failed });
+			await this.settleVaultPassword(bulk, vaultDone);
 		} finally {
 			this.bulkActive = false;
 			try {
@@ -1127,7 +1142,7 @@ export default class EnclavePlugin extends Plugin {
 
 		if (!(await this.confirmBulk("permanently decrypt", totalEligible, targetDescription))) return false;
 
-		let bulk: BulkDecrypt = { work: [], vaultPassword: null, vaultWasCached: false, skippedSeparate: 0 };
+		let bulk: BulkDecrypt = { work: [], vaultPassword: null, skippedSeparate: 0 };
 		if (lockedCount > 0) {
 			const prepared = await this.prepareBulkDecrypt(set, "permanently decrypt", "Permanently Decrypt");
 			if (!prepared) {
@@ -1190,7 +1205,7 @@ export default class EnclavePlugin extends Plugin {
 				if (!ran) skipped++;
 			}
 
-			await this.settleVaultPassword(bulk, vaultDone, { wrongPassword, changed, failed });
+			await this.settleVaultPassword(bulk, vaultDone);
 		} finally {
 			this.bulkActive = false;
 			try {
@@ -1407,6 +1422,12 @@ export default class EnclavePlugin extends Plugin {
 			cta: confirm ? "Lock" : "Unlock",
 		});
 		if (!password) return null;
+		if (!confirm) {
+			// Unlocking: the note itself shows whether the password is right, and an
+			// earlier vault password must still open notes locked with it. It's kept
+			// for the session only once it has opened a note (vaultPasswordWorked).
+			return password;
+		}
 		if (check && !(await passwordMatchesCheck(check, password))) {
 			new Notice("Enclave: that isn't your vault password.");
 			return null;
@@ -1417,12 +1438,33 @@ export default class EnclavePlugin extends Plugin {
 	}
 
 	/**
-	 * The vault password just opened a note: keep it for the session, and if no
-	 * vault check exists yet (notes locked before checks existed), create one.
+	 * A vault password just opened a note. Keep it for the session if it's the
+	 * current vault password, creating the vault check if none exists yet (notes
+	 * locked before checks existed). An earlier vault password is not kept, so new
+	 * locks always use the current one.
 	 */
 	private async vaultPasswordWorked(password: string): Promise<void> {
-		this.cacheVaultPassword(password);
-		if (!this.settings.vaultCheck) await this.saveVaultCheck(password);
+		if (!this.settings.vaultCheck) {
+			this.cacheVaultPassword(password);
+			await this.saveVaultCheck(password);
+		} else if (await this.isCurrentVaultPassword(password)) {
+			this.cacheVaultPassword(password);
+		}
+	}
+
+	/** Whether `password` is the vault password as it is now. */
+	private async isCurrentVaultPassword(password: string): Promise<boolean> {
+		if (password === this.vaultPassword) return true;
+		const check = this.settings.vaultCheck;
+		return !!check && (await passwordMatchesCheck(check, password));
+	}
+
+	/** Tell the user why their edit was refused, at most every few seconds. */
+	private notifyLockedEdit(): void {
+		const now = this.now();
+		if (now - this.lastLockedEditNotice < 4000) return;
+		this.lastLockedEditNotice = now;
+		new Notice("Enclave: this note is locked. Unlock it to edit.");
 	}
 
 	private async saveVaultCheck(password: string): Promise<void> {

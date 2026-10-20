@@ -756,3 +756,54 @@ test("hiding Obsidian on mobile always locks unlocked notes", async () => {
 	}
 	assert.ok(isLocked(files.get("a.md").content));
 });
+
+test("after the vault password is changed, notes locked with the earlier one still unlock", async () => {
+	const oldPw = "oldVaultPassword123";
+	const newPw = "newVaultPassword456";
+	const { app, files } = createMockApp({ "old.md": "Old note", "new.md": "New note" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+
+	plugin.passwordQueue = [oldPw];
+	await plugin.lockNote(files.get("old.md"), "vault");
+	await plugin.resetVaultCheck();
+	plugin.passwordQueue = [newPw];
+	await plugin.lockNote(files.get("new.md"), "vault");
+
+	// Typed in a fresh session: the earlier password opens the old note,
+	// but isn't kept as the session's vault password.
+	plugin.forgetVaultPassword(true);
+	plugin.passwordQueue = [oldPw];
+	await plugin.unlockNote(files.get("old.md"));
+	assert.equal(files.get("old.md").content, "Old note");
+	assert.equal(plugin.vaultPassword, null);
+});
+
+test("when the current vault password doesn't open a note, the earlier one is asked for", async () => {
+	const oldPw = "oldVaultPassword123";
+	const newPw = "newVaultPassword456";
+	const { app, files } = createMockApp({ "old.md": "Old note", "new.md": "New note" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+
+	plugin.passwordQueue = [oldPw];
+	await plugin.lockNote(files.get("old.md"), "vault");
+	await plugin.resetVaultCheck();
+	plugin.passwordQueue = [newPw];
+	await plugin.lockNote(files.get("new.md"), "vault");
+	assert.equal(plugin.vaultPassword, newPw);
+
+	// The session's (new) vault password fails on the old note, so the earlier one is asked for.
+	plugin.passwordQueue = [oldPw];
+	await plugin.unlockNote(files.get("old.md"));
+	assert.equal(files.get("old.md").content, "Old note");
+	assert.equal(plugin.vaultPassword, newPw, "the current vault password stays in use");
+
+	// Locking it again moves it to the current vault password.
+	await plugin.lockAll(true);
+	assert.ok(isLocked(files.get("old.md").content));
+	plugin.forgetVaultPassword(true);
+	plugin.passwordQueue = [newPw];
+	await plugin.unlockNote(files.get("old.md"));
+	assert.equal(files.get("old.md").content, "Old note");
+});

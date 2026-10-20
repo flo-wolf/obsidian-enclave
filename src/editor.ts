@@ -1,15 +1,17 @@
 /*
- * Live Preview support for locked notes.
+ * Editor support for locked notes.
  *
  * In Live Preview, Obsidian shows a code block's source whenever the cursor is
  * inside it — and when a note opens, the cursor lands on the first line of the
- * body, which in a locked note is the payload block. This replaces the block
- * with the unlock card as an atomic range, so the cursor can't enter it and the
- * card is always what you see. Source mode is left alone, so the raw block is
- * still visible there.
+ * body, which in a locked note is the payload block. lockedCardExtension
+ * replaces the block with the unlock card as an atomic range, so the cursor
+ * can't enter it and the card is always what you see. Source mode is left
+ * alone, so the raw block is still visible there.
+ *
+ * lockedNoteReadOnly keeps the user from typing into a locked note, in either mode.
  */
 
-import { type EditorState, Prec, StateField } from "@codemirror/state";
+import { EditorState, Prec, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { editorInfoField, editorLivePreviewField } from "obsidian";
 import { FENCE_LANG } from "./format";
@@ -105,4 +107,22 @@ export function lockedCardExtension(render: CardRenderer) {
 
 	// Highest precedence so this card wins over Obsidian's own rendering of the block.
 	return Prec.highest(field);
+}
+
+/** User actions that change the text: typing, deleting, pasting, dropping, moving text, undo and redo. */
+const EDIT_EVENTS = ["input", "delete", "move", "undo", "redo"];
+
+/**
+ * Editor extension that refuses edits the user makes to a locked note, so nothing
+ * gets typed into the encrypted file (where unlocking would silently drop it).
+ * Changes without a user event, such as Enclave unlocking the note or Obsidian
+ * reloading it after a sync, still go through.
+ */
+export function lockedNoteReadOnly(onBlocked: () => void) {
+	return EditorState.changeFilter.of((tr) => {
+		if (!tr.docChanged || !EDIT_EVENTS.some((event) => tr.isUserEvent(event))) return true;
+		if (!findPayloadBlock(tr.startState)) return true;
+		onBlocked();
+		return false;
+	});
 }

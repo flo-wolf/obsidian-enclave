@@ -155,7 +155,7 @@ export class EnclaveSettingTab extends PluginSettingTab {
 			.setName("Vault password")
 			.setDesc(
 				this.plugin.settings.vaultCheck
-					? "Set. A mistyped vault password is rejected right away. Forget it to choose a new vault password the next time you lock a note; notes already locked keep needing the current one."
+					? "Set. A mistyped vault password is rejected right away. Forget it to choose a new vault password the next time you lock a note."
 					: "Not set yet. You choose it the first time you lock a note with the vault password."
 			);
 		if (this.plugin.settings.vaultCheck) {
@@ -167,7 +167,7 @@ export class EnclaveSettingTab extends PluginSettingTab {
 						const confirmed = await new ConfirmModal(this.app, {
 							title: "Forget the vault password?",
 							message:
-								"Enclave will accept the next vault password you enter as the new one. Notes already locked with the current vault password still need it to unlock.",
+								"Enclave will accept the next vault password you enter as the new one. Notes already locked with the current one still open with it, and switch to the new one the next time they lock while you're using it.",
 							cta: "Forget",
 						}).open();
 						if (!confirmed) return;

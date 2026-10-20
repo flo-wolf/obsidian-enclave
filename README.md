@@ -170,7 +170,7 @@ lock-scope: vault
   needs: `vault` or `note` (separate).
 - `ct` holds the entire original note, properties included, encrypted.
 - In Obsidian, the block shows as a card saying the note is locked, with an
-  **Unlock** button.
+  **Unlock** button. A locked note can't be typed into; unlock it to edit.
 - Because it's still a plain text file, a locked note syncs, backs up and works
   with version control like any other note.
 
@@ -214,6 +214,14 @@ stored.
 If you already had vault notes before checks existed, the vault check is created
 the first time the vault password successfully unlocks one of them.
 
+### Changing the vault password
+
+**Settings → Vault password → Forget** lets you choose a new vault password the
+next time you lock a note. Notes locked with the old one still open with the old
+one: if the new password doesn't open a note, Enclave asks for the earlier
+password. When that note locks again while you're using the new vault password,
+it's re-encrypted with the new one, so old notes move over as you use them.
+
 ### Permanent decryption
 
 Permanently decrypting a note restores it as a normal note and removes it from
@@ -229,7 +237,7 @@ Enclave's tracking. It will not be locked again unless you lock it yourself.
 | Forget vault password after | 30 min | How long the vault password stays in memory. `0` keeps it until Obsidian quits. |
 | Key derivation iterations | 310,000 | PBKDF2 iterations for newly locked notes. Higher is slower to unlock and slower to brute-force. |
 | Verify before overwriting | On | The round-trip check described above. Roughly doubles the time a lock takes. |
-| Vault password | Not set | Whether the vault password has been chosen. **Forget** lets you choose a new one the next time you lock a note; notes already locked keep needing the current one. |
+| Vault password | Not set | Whether the vault password has been chosen. **Forget** lets you choose a new one the next time you lock a note; see [Changing the vault password](#changing-the-vault-password). |
 | Locked folders | None | Folders you've [locked](#lock-a-folder), with their kind of password. The **×** button stops locking new notes there; its notes stay as they are. |
 
 ## Development
