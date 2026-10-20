@@ -2,6 +2,7 @@ import {
 	MarkdownView,
 	Menu,
 	Notice,
+	Platform,
 	Plugin,
 	setIcon,
 	TAbstractFile,
@@ -271,8 +272,9 @@ export default class EnclavePlugin extends Plugin {
 		// delivered on an OS-initiated suspend, and setInterval (the sweep) is frozen
 		// while backgrounded. visibilitychange/pagehide fire on backgrounding in the
 		// Capacitor webview, so they bound the plaintext-on-disk window on mobile.
+		// pagehide also fires when a desktop window closes.
 		this.registerDomEvent(window.document, "visibilitychange", () => {
-			if (window.document.hidden) void this.lockAll(true);
+			if (window.document.hidden) this.handleHidden();
 		});
 		this.registerDomEvent(window, "pagehide", () => void this.lockAll(true));
 	}
@@ -1681,6 +1683,15 @@ export default class EnclavePlugin extends Plugin {
 			// A note created in a protected folder is locked the first time it's left.
 			void this.lockNewNote(prevFile);
 		}
+	}
+
+	/**
+	 * Obsidian was hidden: backgrounded on mobile, or minimized / moved to another
+	 * space on desktop. Mobile always locks here, since nothing later is reliable;
+	 * desktop only if the setting is on, as quitting and the timer still lock.
+	 */
+	private handleHidden(): void {
+		if (Platform.isMobile || this.settings.lockWhenHidden) void this.lockAll(true);
 	}
 
 	private async sweep(): Promise<void> {

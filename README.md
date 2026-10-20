@@ -195,8 +195,9 @@ until it is locked again. Enclave keeps that window short:
 
 - It re-locks a note when you navigate away from it.
 - It re-locks notes that have been idle for 5 minutes (configurable).
-- It re-locks everything when Obsidian quits, or on mobile when the app goes to
-  the background.
+- It re-locks everything when Obsidian quits, and when it's hidden: on mobile
+  whenever the app goes to the background, on desktop when you minimize it or
+  switch to another space (you can turn that off in the settings).
 
 If Obsidian crashes while notes are unlocked, Enclave notices on the next start
 and offers **Secure notes left exposed** to encrypt them again.
@@ -222,7 +223,8 @@ Enclave's tracking. It will not be locked again unless you lock it yourself.
 
 | Setting | Default | |
 |---|---|---|
-| Auto-lock on close | On | Re-lock a note when you navigate away from it. |
+| Lock when leaving a note | On | Re-lock a note when you switch to another note. |
+| Lock when Obsidian is hidden | On | Desktop only: re-lock unlocked notes when you minimize Obsidian or switch to another space or full-screen app. On mobile, notes always re-lock when the app goes to the background. |
 | Auto-lock after inactivity | 5 min | Re-lock idle unlocked notes. `0` turns it off. |
 | Forget vault password after | 30 min | How long the vault password stays in memory. `0` keeps it until Obsidian quits. |
 | Key derivation iterations | 310,000 | PBKDF2 iterations for newly locked notes. Higher is slower to unlock and slower to brute-force. |

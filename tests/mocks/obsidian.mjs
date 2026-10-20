@@ -126,3 +126,5 @@ export class PluginSettingTab {
 // test editor states, so lookups with `require: false` return undefined.
 export const editorInfoField = {};
 export const editorLivePreviewField = {};
+
+export const Platform = { isMobile: false, isDesktop: true };

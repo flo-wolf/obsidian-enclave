@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import EnclavePlugin from "../src/main.ts";
 import { isLocked, buildLockedNote } from "../src/format.ts";
 import { encryptContent } from "../src/crypto.ts";
-import { TFile, TFolder } from "obsidian";
+import { Platform, TFile, TFolder } from "obsidian";
 
 // The plugin schedules its move-in prompt with window.setTimeout.
 globalThis.window ??= globalThis;
@@ -713,4 +713,46 @@ test("invalid entries in the settings file are dropped on load", async () => {
 	await plugin.loadSettings();
 	assert.deepEqual(plugin.settings.protectedFolders, [{ path: "ok", scope: "vault" }]);
 	assert.equal(plugin.settings.vaultCheck, null);
+});
+
+test("hiding Obsidian on desktop locks unlocked notes only when the setting is on", async () => {
+	const vaultPw = "vaultPassword123";
+	const { app, files } = createMockApp({
+		"a.md": buildLockedNote(await encryptContent("Note A", vaultPw, "vault", 100000)),
+	});
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.passwordQueue = [vaultPw];
+	await plugin.unlockNote(files.get("a.md"));
+
+	plugin.settings.lockWhenHidden = false;
+	plugin.handleHidden();
+	await new Promise((r) => setTimeout(r, 50));
+	assert.equal(files.get("a.md").content, "Note A");
+
+	plugin.settings.lockWhenHidden = true;
+	plugin.handleHidden();
+	await waitFor(() => isLocked(files.get("a.md").content));
+	assert.ok(isLocked(files.get("a.md").content));
+});
+
+test("hiding Obsidian on mobile always locks unlocked notes", async () => {
+	const vaultPw = "vaultPassword123";
+	const { app, files } = createMockApp({
+		"a.md": buildLockedNote(await encryptContent("Note A", vaultPw, "vault", 100000)),
+	});
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.passwordQueue = [vaultPw];
+	await plugin.unlockNote(files.get("a.md"));
+
+	plugin.settings.lockWhenHidden = false;
+	Platform.isMobile = true;
+	try {
+		plugin.handleHidden();
+		await waitFor(() => isLocked(files.get("a.md").content));
+	} finally {
+		Platform.isMobile = false;
+	}
+	assert.ok(isLocked(files.get("a.md").content));
 });

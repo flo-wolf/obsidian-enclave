@@ -16,6 +16,8 @@ export interface EnclaveSettings {
 	iterations: number;
 	/** Re-encrypt an unlocked note automatically when you navigate away. */
 	autoLockOnClose: boolean;
+	/** Desktop: re-encrypt unlocked notes when Obsidian is minimized or hidden. Mobile always does. */
+	lockWhenHidden: boolean;
 	/** Re-encrypt unlocked notes after this many minutes of inactivity (0 = off). */
 	autoLockMinutes: number;
 	/** Forget the cached vault password after this many minutes (0 = until quit). */
@@ -31,6 +33,7 @@ export interface EnclaveSettings {
 export const DEFAULT_SETTINGS: EnclaveSettings = {
 	iterations: DEFAULT_ITERATIONS,
 	autoLockOnClose: true,
+	lockWhenHidden: true,
 	// Non-zero by default so a note left open in a background pane (where the
 	// navigate-away hook never fires) still re-locks as a backstop.
 	autoLockMinutes: 5,
@@ -50,13 +53,25 @@ export class EnclaveSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName("Auto-lock on close")
+			.setName("Lock when leaving a note")
 			.setDesc(
-				"Re-encrypt a note as soon as you navigate away from it. Strongly recommended — while a note is unlocked its plaintext is written to disk."
+				"Re-encrypt a note as soon as you switch to another note. Strongly recommended — while a note is unlocked its plaintext is written to disk."
 			)
 			.addToggle((toggle) =>
 				toggle.setValue(this.plugin.settings.autoLockOnClose).onChange(async (value) => {
 					this.plugin.settings.autoLockOnClose = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName("Lock when Obsidian is hidden")
+			.setDesc(
+				"Desktop only: re-encrypt unlocked notes when you minimize Obsidian or switch to another space or full-screen app. Quitting Obsidian always locks. On iOS and Android, notes always lock when the app goes to the background, since that's the last reliable moment to do it there."
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.lockWhenHidden).onChange(async (value) => {
+					this.plugin.settings.lockWhenHidden = value;
 					await this.plugin.saveSettings();
 				})
 			);

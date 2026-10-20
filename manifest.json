@@ -1,7 +1,7 @@
 {
 	"id": "enclave",
 	"name": "Enclave",
-	"version": "1.0.6",
+	"version": "1.0.7",
 	"minAppVersion": "1.4.0",
 	"description": "Encrypt note contents at rest while keeping the title visible. Lock, unlock, or permanently decrypt notes with a vault-wide password or a per-note password.",
 	"author": "Florian Wolf",
