@@ -89,7 +89,7 @@ export class EnclaveSettingTab extends PluginSettingTab {
 				items: [
 					{
 						name: "Lock when leaving a note",
-						desc: "Re-encrypt a note as soon as you switch to another note. Strongly recommended — while a note is unlocked its plaintext is written to disk.",
+						desc: "Re-encrypt a note as soon as you switch to another note. Strongly recommended, because an unlocked note's plain text is on disk.",
 						control: { type: "toggle", key: "autoLockOnClose" },
 					},
 					{
@@ -236,7 +236,7 @@ export class EnclaveSettingTab extends PluginSettingTab {
 					},
 					{
 						name: "Verify before overwriting",
-						desc: "After encrypting, decrypt the result and confirm it matches the original before replacing the note. Strongly recommended — prevents a faulty lock from destroying content. Roughly doubles lock time.",
+						desc: "After encrypting, decrypt the result and check that it matches the original before replacing the note. Strongly recommended, since it keeps a faulty lock from destroying content. Roughly doubles the time a lock takes.",
 						control: { type: "toggle", key: "verifyOnLock" },
 					},
 					{

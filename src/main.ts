@@ -1671,16 +1671,18 @@ export default class EnclavePlugin extends Plugin {
 		const automatic: string[] = [];
 
 		if (unlocked > 0) {
-			const it = unlocked === 1 ? "it" : "them";
-			state.push(unlocked === 1 ? "1 note is unlocked" : `${unlocked} notes are unlocked`);
+			const one = unlocked === 1;
+			state.push(one ? "1 note is unlocked" : `${unlocked} notes are unlocked`);
 			const when = [
-				...(this.settings.autoLockOnClose ? [`when you leave ${it}`] : []),
+				...(this.settings.autoLockOnClose ? [`when you leave ${one ? "it" : "them"}`] : []),
 				...(autoLockMinutes > 0 ? [`after ${minutes(autoLockMinutes)} without use`] : []),
-				...(Platform.isMobile
-					? ["when you switch to another app"]
-					: [...(this.settings.lockWhenHidden ? ["when Obsidian is hidden"] : []), "when you quit Obsidian"]),
+				Platform.isMobile
+					? "when you switch apps"
+					: this.settings.lockWhenHidden
+						? "when Obsidian is hidden or closed"
+						: "when you close Obsidian",
 			];
-			automatic.push(`${unlocked === 1 ? "the note locks" : "the notes lock"} again ${listOf(when, "or")}`);
+			automatic.push(`${one ? "The note locks" : "They lock"} again ${listOf(when, "or")}.`);
 		}
 
 		const remembered = [
@@ -1689,15 +1691,14 @@ export default class EnclavePlugin extends Plugin {
 			...(separate > 1 ? [`separate passwords for ${separate} notes or folders`] : []),
 		];
 		if (remembered.length > 0) {
-			state.push(`Enclave remembers ${listOf(remembered, "and")}`);
-			const subject = vault && separate === 0 ? "the vault password is" : "remembered passwords are";
+			state.push(`Enclave remembers ${listOf(remembered, "and")} temporarily`);
+			const subject = vault && separate === 0 ? "The password is" : "Passwords are";
 			automatic.push(
-				`${subject} forgotten ${forgetPasswordMinutes > 0 ? `after ${minutes(forgetPasswordMinutes)} unused` : "when you quit Obsidian"}`
+				`${subject} forgotten ${forgetPasswordMinutes > 0 ? `after ${minutes(forgetPasswordMinutes)} unused` : "when you close Obsidian"}.`
 			);
 		}
 
-		const intro = state.length > 1 ? "Both are" : "This is";
-		return `${capitalize(listOf(state, "and"))}. ${intro} taken care of automatically: ${automatic.join(", and ")}. You don't need to do anything — Lock and forget just does it right away.`;
+		return `${capitalize(listOf(state, "and"))}. ${automatic.join(" ")} You don't need to do anything; Lock and forget just does it now.`;
 	}
 
 	forgetSeparatePasswords(): void {
@@ -2063,9 +2064,10 @@ function minutes(n: number): string {
 	return n === 1 ? "1 minute" : `${n} minutes`;
 }
 
-/** "a", "a or b", "a, b or c" (with `and` or `or`). */
+/** "a", "a or b", "a, b, or c" (with `and` or `or`). */
 function listOf(items: string[], conjunction: "and" | "or"): string {
-	return items.length > 1 ? `${items.slice(0, -1).join(", ")} ${conjunction} ${items[items.length - 1]}` : items[0];
+	if (items.length < 3) return items.join(` ${conjunction} `);
+	return `${items.slice(0, -1).join(", ")}, ${conjunction} ${items[items.length - 1]}`;
 }
 
 function capitalize(text: string): string {

@@ -1058,13 +1058,13 @@ test("the settings tab can tell which passwords are in memory", async () => {
 	await plugin.unlockNote(files.get("private/a.md"));
 	assert.equal(
 		plugin.rememberedPasswordsSummary(),
-		"1 note is unlocked and Enclave remembers a separate password for 1 note or folder. Both are taken care of automatically: the note locks again when you leave it, when Obsidian is hidden or when you quit Obsidian, and remembered passwords are forgotten after 30 minutes unused. You don't need to do anything — Lock and forget just does it right away."
+		"1 note is unlocked and Enclave remembers a separate password for 1 note or folder temporarily. The note locks again when you leave it or when Obsidian is hidden or closed. Passwords are forgotten after 30 minutes unused. You don't need to do anything; Lock and forget just does it now."
 	);
 
 	await plugin.lockAll(true);
 	assert.equal(
 		plugin.rememberedPasswordsSummary(),
-		"Enclave remembers a separate password for 1 note or folder. This is taken care of automatically: remembered passwords are forgotten after 30 minutes unused. You don't need to do anything — Lock and forget just does it right away."
+		"Enclave remembers a separate password for 1 note or folder temporarily. Passwords are forgotten after 30 minutes unused. You don't need to do anything; Lock and forget just does it now."
 	);
 });
 
@@ -1079,7 +1079,7 @@ test("lock and forget locks unlocked notes first, so no password is left", async
 	await plugin.unlockNote(files.get("a.md"));
 	assert.equal(
 		plugin.rememberedPasswordsSummary(),
-		"1 note is unlocked and Enclave remembers the vault password. Both are taken care of automatically: the note locks again when you leave it, after 5 minutes without use, when Obsidian is hidden or when you quit Obsidian, and the vault password is forgotten after 30 minutes unused. You don't need to do anything — Lock and forget just does it right away."
+		"1 note is unlocked and Enclave remembers the vault password temporarily. The note locks again when you leave it, after 5 minutes without use, or when Obsidian is hidden or closed. The password is forgotten after 30 minutes unused. You don't need to do anything; Lock and forget just does it now."
 	);
 
 	await plugin.lockAndForget();
