@@ -1,6 +1,6 @@
 {
 	"name": "enclave",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"description": "Encrypt notes and whole folders with a vault password or their own password. Locked notes keep their names and links, lock again automatically, and can be decrypted for good at any time.",
 	"main": "main.js",
 	"scripts": {

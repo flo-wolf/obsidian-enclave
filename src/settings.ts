@@ -22,8 +22,10 @@ export interface EnclaveSettings {
 	hideLockProperties: boolean;
 	/** Re-encrypt unlocked notes after this many minutes of inactivity (0 = off). */
 	autoLockMinutes: number;
-	/** Forget the cached vault password after this many minutes (0 = until quit). */
+	/** Forget remembered passwords after this many minutes unused (0 = until quit). */
 	forgetPasswordMinutes: number;
+	/** Keep separate passwords in memory like the vault password. */
+	rememberSeparatePasswords: boolean;
 	/** Verify each note decrypts back to the original before overwriting it. */
 	verifyOnLock: boolean;
 	/** Folders kept locked, set by locking a folder. */
@@ -41,6 +43,7 @@ export const DEFAULT_SETTINGS: EnclaveSettings = {
 	// navigate-away hook never fires) still re-locks as a backstop.
 	autoLockMinutes: 5,
 	forgetPasswordMinutes: 30,
+	rememberSeparatePasswords: false,
 	verifyOnLock: true,
 	protectedFolders: [],
 	vaultCheck: null,
@@ -84,8 +87,13 @@ export class EnclaveSettingTab extends PluginSettingTab {
 						},
 					},
 					{
-						name: "Forget vault password after",
-						desc: "Minutes the vault password stays in memory. After this you'll be asked again on the next unlock. 0 keeps it until Obsidian quits.",
+						name: "Remember separate passwords",
+						desc: "Keep separate passwords in memory like the vault password, so a note or folder you unlocked recently opens again without asking. They're forgotten together with the vault password and never written to disk.",
+						control: { type: "toggle", key: "rememberSeparatePasswords" },
+					},
+					{
+						name: "Forget passwords after",
+						desc: "Minutes the vault password, and remembered separate passwords, stay in memory without being used. After this you'll be asked again. 0 keeps them until Obsidian quits.",
 						control: {
 							type: "number",
 							key: "forgetPasswordMinutes",
@@ -172,6 +180,7 @@ export class EnclaveSettingTab extends PluginSettingTab {
 	async setControlValue(key: string, value: unknown): Promise<void> {
 		this.plugin.settings = { ...this.plugin.settings, [key]: value };
 		if (key === "hideLockProperties") this.plugin.applyPropertyHiding();
+		if (key === "rememberSeparatePasswords" && !value) this.plugin.forgetSeparatePasswords();
 		await this.plugin.saveSettings();
 	}
 

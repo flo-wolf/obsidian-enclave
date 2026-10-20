@@ -28,6 +28,7 @@ class TestEnclavePlugin extends EnclavePlugin {
 	}
 
 	promptPassword() {
+		this.prompts = (this.prompts ?? 0) + 1;
 		if (this.passwordQueue) return Promise.resolve(this.passwordQueue.shift() ?? null);
 		return Promise.resolve(this.suppliedPassword);
 	}
@@ -823,4 +824,104 @@ test("declining the folder lock confirmation changes nothing", async () => {
 	assert.equal(files.get("work/a.md").content, "Note A");
 	assert.deepEqual(plugin.settings.protectedFolders, []);
 	assert.deepEqual(plugin.passwordQueue, ["vaultPassword123"], "no password is asked for");
+});
+
+async function separateNoteSetup(notePw) {
+	const { app, files } = createMockApp({
+		"private/a.md": buildLockedNote(await encryptContent("Note A", notePw, "note", 100000)),
+	});
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.settings.autoLockMinutes = 0;
+	return { plugin, files };
+}
+
+test("separate passwords are asked for every time unless remembering is on", async () => {
+	const notePw = "noteSecret123";
+	const { plugin, files } = await separateNoteSetup(notePw);
+
+	plugin.passwordQueue = [notePw, notePw];
+	await plugin.unlockNote(files.get("private/a.md"));
+	await plugin.lockAll(true);
+	await plugin.unlockNote(files.get("private/a.md"));
+
+	assert.equal(files.get("private/a.md").content, "Note A");
+	assert.equal(plugin.prompts, 2);
+});
+
+test("a remembered separate password opens the note again without asking", async () => {
+	const notePw = "noteSecret123";
+	const { plugin, files } = await separateNoteSetup(notePw);
+	plugin.settings.rememberSeparatePasswords = true;
+
+	plugin.passwordQueue = [notePw];
+	await plugin.unlockNote(files.get("private/a.md"));
+	await plugin.lockAll(true);
+	assert.ok(isLocked(files.get("private/a.md").content));
+
+	await plugin.unlockNote(files.get("private/a.md"));
+	assert.equal(files.get("private/a.md").content, "Note A");
+	assert.equal(plugin.prompts, 1);
+});
+
+test("remembered separate passwords follow a renamed note and expire with the vault password", async () => {
+	const notePw = "noteSecret123";
+	const { plugin, files } = await separateNoteSetup(notePw);
+	plugin.settings.rememberSeparatePasswords = true;
+	plugin.settings.forgetPasswordMinutes = 1;
+	let clock = 1_000_000;
+	plugin.now = () => clock;
+
+	plugin.passwordQueue = [notePw];
+	await plugin.unlockNote(files.get("private/a.md"));
+	await plugin.lockAll(true);
+
+	plugin.onRename(moveFile(files, "private/a.md", "private/renamed.md"), "private/a.md");
+	await plugin.unlockNote(files.get("private/renamed.md"));
+	assert.equal(plugin.prompts, 1, "still remembered after the rename");
+	await plugin.lockAll(true);
+
+	clock += 61 * 1000;
+	await plugin.triggerSweep();
+	plugin.passwordQueue = [notePw];
+	await plugin.unlockNote(files.get("private/renamed.md"));
+	assert.equal(plugin.prompts, 2, "asked again once it expired");
+});
+
+test("forgetting all passwords also forgets remembered separate passwords", async () => {
+	const notePw = "noteSecret123";
+	const { plugin, files } = await separateNoteSetup(notePw);
+	plugin.settings.rememberSeparatePasswords = true;
+
+	plugin.passwordQueue = [notePw, notePw];
+	await plugin.unlockNote(files.get("private/a.md"));
+	await plugin.lockAll(true);
+	plugin.forgetAllPasswords();
+	await plugin.unlockNote(files.get("private/a.md"));
+
+	assert.equal(plugin.prompts, 2);
+});
+
+test("with a remembered folder password, a note moved in is locked after a confirmation", async () => {
+	const folderPw = "folderSecret123";
+	const { app, files } = createMockApp({ "private/a.md": "Note A", "inbox/idea.md": "An idea" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.settings.rememberSeparatePasswords = true;
+	plugin.passwordQueue = [folderPw];
+	await plugin.lockFolder(new TFolder("private"), "note");
+	assert.equal(plugin.prompts, 1);
+
+	plugin.onRename(moveFile(files, "inbox/idea.md", "private/idea.md"), "inbox/idea.md");
+	await plugin.promptMovedIn();
+
+	assert.equal(plugin.prompts, 1, "no password prompt");
+	assert.equal(plugin.moveInPrompts.length, 1, "but a confirmation");
+	assert.match(plugin.moveInPrompts[0], /locked with a separate password/);
+	assert.ok(isLocked(files.get("private/idea.md").content));
+
+	plugin.forgetAllPasswords();
+	plugin.passwordQueue = [folderPw];
+	await plugin.unlockNote(files.get("private/idea.md"));
+	assert.equal(files.get("private/idea.md").content, "An idea", "locked with the folder's password");
 });

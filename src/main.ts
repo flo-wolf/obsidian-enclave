@@ -114,6 +114,12 @@ export default class EnclavePlugin extends Plugin {
 	 */
 	private protectedBeforeRename: ProtectedFolder[] = [];
 
+	/**
+	 * Separate passwords kept in memory while "Remember separate passwords" is on,
+	 * keyed by noteKey()/folderKey(). Never written to disk.
+	 */
+	private separatePasswords = new Map<string, { password: string; usedAt: number }>();
+
 	/** When the "this note is locked" hint was last shown, so typing doesn't flood notices. */
 	private lastLockedEditNotice = 0;
 
@@ -171,6 +177,7 @@ export default class EnclavePlugin extends Plugin {
 		// session detect and re-secure anything this didn't finish in time.
 		void this.lockAll(true);
 		this.vaultPassword = null;
+		this.separatePasswords.clear();
 		document.body.removeClass(HIDE_PROPERTIES_CLASS);
 		for (const view of this.markdownViews()) view.containerEl.removeClass(LOCKED_VIEW_CLASS);
 	}
@@ -250,8 +257,8 @@ export default class EnclavePlugin extends Plugin {
 
 		this.addCommand({
 			id: "forget-vault-password",
-			name: "Forget vault password (lock session)",
-			callback: () => this.forgetVaultPassword(),
+			name: "Forget remembered passwords",
+			callback: () => this.forgetAllPasswords(),
 		});
 		this.addCommand({
 			id: "secure-exposed",
@@ -748,10 +755,11 @@ export default class EnclavePlugin extends Plugin {
 		scope: EnclaveScope,
 		ask: PasswordPromptOptions
 	): Promise<{ plaintext: string; password: string } | null> {
-		let password = scope === "note" ? await this.promptPassword(ask) : await this.ensureVaultPassword(false);
+		if (scope === "note") return this.openSeparateNote(file, payload, ask);
+		let password = await this.ensureVaultPassword(false);
 		if (!password) return null;
 		let plaintext = await this.tryDecrypt(payload, password);
-		if (plaintext === null && scope === "vault" && (await this.isCurrentVaultPassword(password))) {
+		if (plaintext === null && (await this.isCurrentVaultPassword(password))) {
 			password = await this.promptPassword({
 				...ask,
 				description: `"${file.basename}" was locked with a vault password you've since changed. Enter that earlier password.`,
@@ -762,6 +770,44 @@ export default class EnclavePlugin extends Plugin {
 		if (plaintext === null) {
 			new Notice("Enclave: incorrect password.");
 			return null;
+		}
+		return { plaintext, password };
+	}
+
+	/**
+	 * Decrypt a separate-password note. With "Remember separate passwords" on, a
+	 * password remembered for the note or its separate-password folder is tried
+	 * first, and one entered here is remembered for the note (and for the folder,
+	 * if it's the folder's password).
+	 */
+	private async openSeparateNote(
+		file: TFile,
+		payload: EnclavePayload,
+		ask: PasswordPromptOptions
+	): Promise<{ plaintext: string; password: string } | null> {
+		const folder = this.protectedFolderOf(file.path);
+		const separateFolder = folder?.scope === "note" ? folder : null;
+		for (const key of [noteKey(file.path), separateFolder ? folderKey(separateFolder.path) : null]) {
+			const remembered = key ? this.rememberedPassword(key) : null;
+			if (!remembered) continue;
+			const plaintext = await this.tryDecrypt(payload, remembered);
+			if (plaintext !== null) return { plaintext, password: remembered };
+		}
+
+		const password = await this.promptPassword(ask);
+		if (!password) return null;
+		const plaintext = await this.tryDecrypt(payload, password);
+		if (plaintext === null) {
+			new Notice("Enclave: incorrect password.");
+			return null;
+		}
+		this.rememberPassword(noteKey(file.path), password);
+		if (
+			this.settings.rememberSeparatePasswords &&
+			separateFolder?.check &&
+			(await passwordMatchesCheck(separateFolder.check, password))
+		) {
+			this.rememberPassword(folderKey(separateFolder.path), password);
 		}
 		return { plaintext, password };
 	}
@@ -1000,7 +1046,7 @@ export default class EnclavePlugin extends Plugin {
 
 		// A separate-password folder gets its password here, once, and keeps a check of it.
 		let folderPassword: string | null = null;
-		const askPassword = async () => (folderPassword = await this.askFolderPassword(folder.path));
+		const askPassword = async () => (folderPassword = await this.folderPassword(folder.path));
 		if (unlockedCount > 0) {
 			const opts = scope === "note" ? { confirm: false, password: askPassword } : { confirm: false };
 			if (!(await this.lockFiles(notes, this.describeFolder(folder), scope, opts))) return;
@@ -1011,6 +1057,7 @@ export default class EnclavePlugin extends Plugin {
 			? await createPasswordCheck(folderPassword, "note", this.settings.iterations)
 			: undefined;
 		await this.setProtection(folder.path, scope, check);
+		if (folderPassword) this.rememberPassword(folderKey(folder.path), folderPassword);
 		if (unlockedCount === 0) {
 			new Notice(`Enclave: "${folder.path}" is locked. Notes moved or created there will be locked too.`);
 		}
@@ -1146,6 +1193,7 @@ export default class EnclavePlugin extends Plugin {
 							// Persist per note so a crash mid-bulk still leaves a recoverable
 							// ledger of the plaintext we've already written (matches unlockNote).
 							await this.persist();
+							if (scope === "note") this.rememberPassword(noteKey(file.path), password);
 							unlockedCount++;
 							if (scope === "vault") vaultDone++;
 						} else {
@@ -1529,6 +1577,44 @@ export default class EnclavePlugin extends Plugin {
 		return !!check && (await passwordMatchesCheck(check, password));
 	}
 
+	/** A remembered separate password, restarting its expiry clock; null if none. */
+	private rememberedPassword(key: string): string | null {
+		const entry = this.separatePasswords.get(key);
+		if (!entry) return null;
+		entry.usedAt = this.now();
+		return entry.password;
+	}
+
+	/** Keep a separate password in memory, if "Remember separate passwords" is on. */
+	private rememberPassword(key: string, password: string): void {
+		if (this.settings.rememberSeparatePasswords) {
+			this.separatePasswords.set(key, { password, usedAt: this.now() });
+		}
+	}
+
+	/** Re-key remembered passwords after a note or folder is renamed or moved. */
+	private moveRememberedPasswords(oldPath: string, newPath: string): void {
+		for (const [key, entry] of Array.from(this.separatePasswords)) {
+			const path = key.slice(key.indexOf(":") + 1);
+			const kind = key.slice(0, key.indexOf(":"));
+			if (path === oldPath || path.startsWith(oldPath + "/")) {
+				this.separatePasswords.delete(key);
+				this.separatePasswords.set(`${kind}:${newPath}${path.slice(oldPath.length)}`, entry);
+			}
+		}
+	}
+
+	forgetSeparatePasswords(): void {
+		this.separatePasswords.clear();
+	}
+
+	/** Forget the vault password and every remembered separate password. */
+	forgetAllPasswords(): void {
+		this.forgetVaultPassword(true);
+		this.forgetSeparatePasswords();
+		new Notice("Enclave: forgot all remembered passwords.");
+	}
+
 	/** Tell the user why their edit was refused, at most every few seconds. */
 	private notifyLockedEdit(): void {
 		const now = this.now();
@@ -1602,6 +1688,9 @@ export default class EnclavePlugin extends Plugin {
 			? this.settings.protectedFolders.filter((f) => f.path !== path && !f.path.startsWith(path + "/"))
 			: [];
 		if (kept.length === this.settings.protectedFolders.length) return false;
+		for (const folder of this.settings.protectedFolders) {
+			if (!kept.includes(folder)) this.separatePasswords.delete(folderKey(folder.path));
+		}
 		this.settings = { ...this.settings, protectedFolders: kept };
 		await this.persist();
 		return true;
@@ -1648,6 +1737,11 @@ export default class EnclavePlugin extends Plugin {
 		return null;
 	}
 
+	/** A separate-password folder's password: remembered, or asked for (see askFolderPassword). */
+	private async folderPassword(folderPath: string): Promise<string | null> {
+		return this.rememberedPassword(folderKey(folderPath)) ?? (await this.askFolderPassword(folderPath));
+	}
+
 	/** Whether `password` decrypts at least one of `payloads`. */
 	private async opensAny(payloads: EnclavePayload[], password: string): Promise<boolean> {
 		for (const payload of payloads) {
@@ -1673,13 +1767,16 @@ export default class EnclavePlugin extends Plugin {
 		} "${folder.path}"`;
 		const target = one ? `"${files[0].basename}"` : `${files.length} note(s)`;
 
-		if (folder.scope === "vault") {
+		// Without a password to type, moved notes need an explicit yes before they're locked.
+		const remembered = folder.scope === "note" ? this.rememberedPassword(folderKey(folder.path)) : null;
+		if (folder.scope === "vault" || remembered) {
+			const kind = folder.scope === "vault" ? "the vault password" : "a separate password";
 			const agreed =
 				how === "created" ||
-				(await this.confirmMoveIn(
-					`${subject}, which is locked with the vault password. Lock ${one ? "it" : "them"} too?`
-				));
-			if (agreed) await this.lockFiles(files, target, "vault", { confirm: false });
+				(await this.confirmMoveIn(`${subject}, which is locked with ${kind}. Lock ${one ? "it" : "them"} too?`));
+			if (!agreed) return;
+			const password = remembered ? async () => remembered : undefined;
+			await this.lockFiles(files, target, folder.scope, { confirm: false, password });
 			return;
 		}
 
@@ -1688,6 +1785,7 @@ export default class EnclavePlugin extends Plugin {
 			`${subject}. Lock ${one ? "it" : "them"} too, or cancel to leave ${one ? "it" : "them"} unlocked.`
 		);
 		if (!password) return;
+		this.rememberPassword(folderKey(folder.path), password);
 		await this.lockFiles(files, target, "note", { confirm: false, password: async () => password });
 	}
 
@@ -1715,6 +1813,7 @@ export default class EnclavePlugin extends Plugin {
 		if (this.lastActiveFile === oldPath) this.lastActiveFile = file.path;
 		if (this.newInProtected.delete(oldPath)) this.newInProtected.add(file.path);
 		if (this.movedIn.delete(oldPath)) this.movedIn.add(file.path);
+		this.moveRememberedPasswords(oldPath, file.path);
 
 		if (file instanceof TFolder) {
 			this.followFolderRename(oldPath, file.path);
@@ -1829,18 +1928,28 @@ export default class EnclavePlugin extends Plugin {
 			}
 		}
 
-		if (
-			this.settings.forgetPasswordMinutes > 0 &&
-			this.vaultPassword &&
-			now - this.vaultPasswordSetAt >= this.settings.forgetPasswordMinutes * 60 * 1000
-		) {
-			this.forgetVaultPassword(true);
+		if (this.settings.forgetPasswordMinutes > 0) {
+			const maxAge = this.settings.forgetPasswordMinutes * 60 * 1000;
+			if (this.vaultPassword && now - this.vaultPasswordSetAt >= maxAge) this.forgetVaultPassword(true);
+			for (const [key, entry] of Array.from(this.separatePasswords)) {
+				if (now - entry.usedAt >= maxAge) this.separatePasswords.delete(key);
+			}
 		}
 	}
 
 	private now(): number {
 		return Date.now();
 	}
+}
+
+/** Key a remembered separate password by the note it opened. */
+function noteKey(path: string): string {
+	return `note:${path}`;
+}
+
+/** Key a remembered separate password by the separate-password folder it belongs to. */
+function folderKey(path: string): string {
+	return `folder:${path}`;
 }
 
 /** Parse a persisted ledger, dropping malformed entries. */
