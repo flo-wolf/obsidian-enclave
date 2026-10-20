@@ -41,6 +41,10 @@ class TestEnclavePlugin extends EnclavePlugin {
 		return Promise.resolve(this.confirmResponse);
 	}
 
+	confirmFolderLock() {
+		return Promise.resolve(this.confirmResponse);
+	}
+
 	// Expose internals for verification in tests
 	getUnlockedMap() {
 		return this.unlocked;
@@ -806,4 +810,17 @@ test("when the current vault password doesn't open a note, the earlier one is as
 	plugin.passwordQueue = [newPw];
 	await plugin.unlockNote(files.get("old.md"));
 	assert.equal(files.get("old.md").content, "Old note");
+});
+
+test("declining the folder lock confirmation changes nothing", async () => {
+	const { app, files } = createMockApp({ "work/a.md": "Note A" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.confirmResponse = false;
+	plugin.passwordQueue = ["vaultPassword123"];
+
+	await plugin.lockFolder(new TFolder("work"));
+
+	assert.equal(files.get("work/a.md").content, "Note A");
+	assert.deepEqual(plugin.settings.protectedFolders, []);
+	assert.deepEqual(plugin.passwordQueue, ["vaultPassword123"], "no password is asked for");
 });

@@ -838,7 +838,13 @@ export default class EnclavePlugin extends Plugin {
 	}
 
 	/** Confirmation gate for mass operations. Overridable for tests. */
-	protected confirmBulk(verb: string, count: number, where: string, customMessage?: string): Promise<boolean> {
+	protected confirmBulk(
+		verb: string,
+		count: number,
+		where: string,
+		customMessage?: string,
+		extra = ""
+	): Promise<boolean> {
 		return new ConfirmModal(this.app, {
 			title: `Enclave: ${verb} ${count} note${count === 1 ? "" : "s"}?`,
 			message:
@@ -847,7 +853,7 @@ export default class EnclavePlugin extends Plugin {
 					verb.includes("decrypt")
 						? " Plain markdown will be restored to disk and auto-lock will no longer re-encrypt."
 						: ""
-				}`,
+				}${extra}`,
 			cta: verb.includes("decrypt") ? "Permanently Decrypt" : "Proceed",
 		}).open();
 	}
@@ -948,24 +954,22 @@ export default class EnclavePlugin extends Plugin {
 	 */
 	async lockFolder(folder: TFolder, scope: EnclaveScope = "vault"): Promise<void> {
 		const notes = this.notesInFolder(folder);
-		let hasUnlocked = false;
+		let unlockedCount = 0;
 		for (const file of notes) {
-			if (!isLocked(await this.readLiveContent(file))) {
-				hasUnlocked = true;
-				break;
-			}
+			if (!isLocked(await this.readLiveContent(file))) unlockedCount++;
 		}
 		if (folder.isRoot()) {
-			if (hasUnlocked) await this.lockFiles(notes, this.describeFolder(folder), scope);
+			if (unlockedCount > 0) await this.lockFiles(notes, this.describeFolder(folder), scope);
 			else new Notice("Enclave: no unlocked notes to lock here.");
 			return;
 		}
+		if (!(await this.confirmFolderLock(folder.path, scope, unlockedCount))) return;
 
 		// A separate-password folder gets its password here, once, and keeps a check of it.
 		let folderPassword: string | null = null;
 		const askPassword = async () => (folderPassword = await this.askFolderPassword(folder.path));
-		if (hasUnlocked) {
-			const opts = scope === "note" ? { password: askPassword } : {};
+		if (unlockedCount > 0) {
+			const opts = scope === "note" ? { confirm: false, password: askPassword } : { confirm: false };
 			if (!(await this.lockFiles(notes, this.describeFolder(folder), scope, opts))) return;
 		} else if (scope === "note" && !(await askPassword())) {
 			return;
@@ -974,9 +978,23 @@ export default class EnclavePlugin extends Plugin {
 			? await createPasswordCheck(folderPassword, "note", this.settings.iterations)
 			: undefined;
 		await this.setProtection(folder.path, scope, check);
-		if (!hasUnlocked) {
+		if (unlockedCount === 0) {
 			new Notice(`Enclave: "${folder.path}" is locked. Notes moved or created there will be locked too.`);
 		}
+	}
+
+	/** Explain what locking a folder does and ask to go ahead. Overridable for tests. */
+	protected confirmFolderLock(path: string, scope: EnclaveScope, unlockedCount: number): Promise<boolean> {
+		const password = scope === "note" ? "the folder's own password" : "the vault password";
+		const now =
+			unlockedCount > 0
+				? `This encrypts the ${unlockedCount === 1 ? "unlocked note" : `${unlockedCount} unlocked notes`} in "${path}" and its subfolders with ${password}.`
+				: `"${path}" has no unlocked notes right now.`;
+		return new ConfirmModal(this.app, {
+			title: `Enclave: lock folder "${path}"?`,
+			message: `${now} The folder then stays locked: notes moved into it or created in it are locked with ${password} too. Notes that are already locked keep their own password.`,
+			cta: "Lock folder",
+		}).open();
 	}
 
 	/**
@@ -1141,7 +1159,7 @@ export default class EnclavePlugin extends Plugin {
 	 * needed), untracks any currently-unlocked notes, writes plain markdown, and
 	 * prevents subsequent auto-locking.
 	 */
-	async permanentlyDecryptFiles(files: TFile[], targetDescription: string): Promise<boolean> {
+	async permanentlyDecryptFiles(files: TFile[], targetDescription: string, extra = ""): Promise<boolean> {
 		const set = await this.collectLocked(files);
 		const lockedCount = set.vault.length + set.note.length;
 		const totalEligible = lockedCount + set.alreadyUnlocked.length;
@@ -1150,7 +1168,9 @@ export default class EnclavePlugin extends Plugin {
 			return true;
 		}
 
-		if (!(await this.confirmBulk("permanently decrypt", totalEligible, targetDescription))) return false;
+		if (!(await this.confirmBulk("permanently decrypt", totalEligible, targetDescription, undefined, extra))) {
+			return false;
+		}
 
 		let bulk: BulkDecrypt = { work: [], vaultPassword: null, skippedSeparate: 0 };
 		if (lockedCount > 0) {
@@ -1239,8 +1259,15 @@ export default class EnclavePlugin extends Plugin {
 
 	/** Permanently decrypts all notes in a folder (or vault), and stops keeping it locked. */
 	async permanentlyDecryptFolder(folder: TFolder): Promise<void> {
-		if (!(await this.permanentlyDecryptFiles(this.notesInFolder(folder), this.describeFolder(folder)))) return;
-		await this.forgetProtectedUnder(folder.isRoot() ? "" : folder.path);
+		const path = folder.isRoot() ? "" : folder.path;
+		const locked = this.settings.protectedFolders.some((f) => !path || f.path === path || f.path.startsWith(path + "/"));
+		const extra = locked
+			? ` The folder also stops being locked, so notes moved or created there later stay unencrypted.`
+			: "";
+		if (!(await this.permanentlyDecryptFiles(this.notesInFolder(folder), this.describeFolder(folder), extra))) return;
+		if (await this.forgetProtectedUnder(path)) {
+			new Notice(`Enclave: ${folder.isRoot() ? "no folders are" : `"${path}" is`} locked anymore.`);
+		}
 	}
 
 	/** Build a human summary line for a bulk run, naming the notes that didn't complete. */
@@ -1536,14 +1563,15 @@ export default class EnclavePlugin extends Plugin {
 		new Notice(`Enclave: "${path}" is no longer kept locked.`);
 	}
 
-	/** Stop keeping a folder and its subfolders locked ("" means every folder). */
-	private async forgetProtectedUnder(path: string): Promise<void> {
+	/** Stop keeping a folder and its subfolders locked ("" means every folder). Returns whether any were. */
+	private async forgetProtectedUnder(path: string): Promise<boolean> {
 		const kept = path
 			? this.settings.protectedFolders.filter((f) => f.path !== path && !f.path.startsWith(path + "/"))
 			: [];
-		if (kept.length === this.settings.protectedFolders.length) return;
+		if (kept.length === this.settings.protectedFolders.length) return false;
 		this.settings = { ...this.settings, protectedFolders: kept };
 		await this.persist();
+		return true;
 	}
 
 	/** Payloads of the notes in `folderPath` (recursively) that are locked with a separate password. */
