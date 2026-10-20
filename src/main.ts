@@ -1653,21 +1653,51 @@ export default class EnclavePlugin extends Plugin {
 		}
 	}
 
-	/** Which passwords are in memory on this device, as a description for the settings tab. */
+	/**
+	 * What's unlocked and remembered on this device, and when that ends on its
+	 * own, as a description for the settings tab. Written from the user's side:
+	 * an unlocked note's own password isn't listed separately, and it says that
+	 * nothing needs to be done.
+	 */
 	rememberedPasswordsSummary(): string {
-		const separate = this.separatePasswords.size;
 		const unlocked = this.unlocked.size;
-		const parts = [
-			...(this.vaultPassword !== null ? ["the vault password"] : []),
+		const separate = this.separatePasswords.size;
+		const vault = this.vaultPassword !== null;
+		if (unlocked === 0 && separate === 0 && !vault) {
+			return "Nothing is unlocked and no passwords are remembered on this device right now.";
+		}
+		const { autoLockMinutes, forgetPasswordMinutes } = this.device();
+		const state: string[] = [];
+		const automatic: string[] = [];
+
+		if (unlocked > 0) {
+			const it = unlocked === 1 ? "it" : "them";
+			state.push(unlocked === 1 ? "1 note is unlocked" : `${unlocked} notes are unlocked`);
+			const when = [
+				...(this.settings.autoLockOnClose ? [`when you leave ${it}`] : []),
+				...(autoLockMinutes > 0 ? [`after ${minutes(autoLockMinutes)} without use`] : []),
+				...(Platform.isMobile
+					? ["when you switch to another app"]
+					: [...(this.settings.lockWhenHidden ? ["when Obsidian is hidden"] : []), "when you quit Obsidian"]),
+			];
+			automatic.push(`${unlocked === 1 ? "the note locks" : "the notes lock"} again ${listOf(when, "or")}`);
+		}
+
+		const remembered = [
+			...(vault ? ["the vault password"] : []),
 			...(separate === 1 ? ["a separate password for 1 note or folder"] : []),
 			...(separate > 1 ? [`separate passwords for ${separate} notes or folders`] : []),
-			// An unlocked note holds its own password until it locks again; otherwise it couldn't re-lock.
-			...(unlocked === 1 ? ["the password of 1 unlocked note"] : []),
-			...(unlocked > 1 ? [`the passwords of ${unlocked} unlocked notes`] : []),
 		];
-		if (parts.length === 0) return "No passwords are in memory on this device right now.";
-		const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
-		return `In memory on this device: ${list}. Lock and forget to clear them.`;
+		if (remembered.length > 0) {
+			state.push(`Enclave remembers ${listOf(remembered, "and")}`);
+			const subject = vault && separate === 0 ? "the vault password is" : "remembered passwords are";
+			automatic.push(
+				`${subject} forgotten ${forgetPasswordMinutes > 0 ? `after ${minutes(forgetPasswordMinutes)} unused` : "when you quit Obsidian"}`
+			);
+		}
+
+		const intro = state.length > 1 ? "Both are" : "This is";
+		return `${capitalize(listOf(state, "and"))}. ${intro} taken care of automatically: ${automatic.join(", and ")}. You don't need to do anything — Lock and forget just does it right away.`;
 	}
 
 	forgetSeparatePasswords(): void {
@@ -2026,6 +2056,20 @@ export default class EnclavePlugin extends Plugin {
 	private now(): number {
 		return Date.now();
 	}
+}
+
+/** "1 minute" / "5 minutes". */
+function minutes(n: number): string {
+	return n === 1 ? "1 minute" : `${n} minutes`;
+}
+
+/** "a", "a or b", "a, b or c" (with `and` or `or`). */
+function listOf(items: string[], conjunction: "and" | "or"): string {
+	return items.length > 1 ? `${items.slice(0, -1).join(", ")} ${conjunction} ${items[items.length - 1]}` : items[0];
+}
+
+function capitalize(text: string): string {
+	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** Key a remembered separate password by the note it opened. */

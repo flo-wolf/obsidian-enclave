@@ -255,7 +255,7 @@ values from your desktop.
 | Key derivation iterations | 310,000 | PBKDF2 iterations for newly locked notes. Higher is slower to unlock and slower to brute-force. |
 | Verify before overwriting | On | The round-trip check described above. Roughly doubles the time a lock takes. |
 | Vault password | Not chosen | Whether you've chosen a vault password. **Change** lets you choose a new one the next time you lock a note; see [Changing the vault password](#changing-the-vault-password). |
-| Passwords in memory | | Which passwords are in memory on this device, including those of unlocked notes, which keep theirs until they lock again. **Lock and forget** locks every unlocked note and then clears them all, like the **Lock all notes and forget passwords** command. |
+| Passwords in memory | | What's unlocked and which passwords are remembered on this device, and when that ends on its own. **Lock and forget** does it right away, like the **Lock all notes and forget passwords** command; you never need to click it for notes to lock. |
 | Locked folders | None | Folders you've [locked](#lock-a-folder), with their kind of password. Deleting one from the list stops locking new notes there; its notes stay as they are. |
 
 ## Development

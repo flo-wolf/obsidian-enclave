@@ -1052,13 +1052,19 @@ test("the settings tab can tell which passwords are in memory", async () => {
 	const notePw = "noteSecret123";
 	const { plugin, files } = await separateNoteSetup(notePw);
 	plugin.settings.rememberPasswords = "all";
-	assert.match(plugin.rememberedPasswordsSummary(), /^No passwords are in memory/);
+	assert.match(plugin.rememberedPasswordsSummary(), /^Nothing is unlocked/);
 
 	plugin.passwordQueue = [notePw];
 	await plugin.unlockNote(files.get("private/a.md"));
 	assert.equal(
 		plugin.rememberedPasswordsSummary(),
-		"In memory on this device: a separate password for 1 note or folder and the password of 1 unlocked note. Lock and forget to clear them."
+		"1 note is unlocked and Enclave remembers a separate password for 1 note or folder. Both are taken care of automatically: the note locks again when you leave it, when Obsidian is hidden or when you quit Obsidian, and remembered passwords are forgotten after 30 minutes unused. You don't need to do anything — Lock and forget just does it right away."
+	);
+
+	await plugin.lockAll(true);
+	assert.equal(
+		plugin.rememberedPasswordsSummary(),
+		"Enclave remembers a separate password for 1 note or folder. This is taken care of automatically: remembered passwords are forgotten after 30 minutes unused. You don't need to do anything — Lock and forget just does it right away."
 	);
 });
 
@@ -1071,12 +1077,15 @@ test("lock and forget locks unlocked notes first, so no password is left", async
 	plugin.settings.iterations = 100000;
 	plugin.passwordQueue = [vaultPw];
 	await plugin.unlockNote(files.get("a.md"));
-	assert.match(plugin.rememberedPasswordsSummary(), /the vault password and the password of 1 unlocked note/);
+	assert.equal(
+		plugin.rememberedPasswordsSummary(),
+		"1 note is unlocked and Enclave remembers the vault password. Both are taken care of automatically: the note locks again when you leave it, after 5 minutes without use, when Obsidian is hidden or when you quit Obsidian, and the vault password is forgotten after 30 minutes unused. You don't need to do anything — Lock and forget just does it right away."
+	);
 
 	await plugin.lockAndForget();
 
 	assert.ok(isLocked(files.get("a.md").content), "the unlocked note was locked with its password first");
 	assert.equal(plugin.vaultPassword, null);
 	assert.equal(plugin.getUnlockedMap().size, 0);
-	assert.match(plugin.rememberedPasswordsSummary(), /^No passwords are in memory/);
+	assert.match(plugin.rememberedPasswordsSummary(), /^Nothing is unlocked/);
 });
