@@ -852,7 +852,7 @@ test("separate passwords are asked for every time unless remembering is on", asy
 test("a remembered separate password opens the note again without asking", async () => {
 	const notePw = "noteSecret123";
 	const { plugin, files } = await separateNoteSetup(notePw);
-	plugin.settings.rememberSeparatePasswords = true;
+	plugin.settings.rememberPasswords = "all";
 
 	plugin.passwordQueue = [notePw];
 	await plugin.unlockNote(files.get("private/a.md"));
@@ -867,7 +867,7 @@ test("a remembered separate password opens the note again without asking", async
 test("remembered separate passwords follow a renamed note and expire with the vault password", async () => {
 	const notePw = "noteSecret123";
 	const { plugin, files } = await separateNoteSetup(notePw);
-	plugin.settings.rememberSeparatePasswords = true;
+	plugin.settings.rememberPasswords = "all";
 	plugin.settings.forgetPasswordMinutes = 1;
 	let clock = 1_000_000;
 	plugin.now = () => clock;
@@ -891,7 +891,7 @@ test("remembered separate passwords follow a renamed note and expire with the va
 test("forgetting all passwords also forgets remembered separate passwords", async () => {
 	const notePw = "noteSecret123";
 	const { plugin, files } = await separateNoteSetup(notePw);
-	plugin.settings.rememberSeparatePasswords = true;
+	plugin.settings.rememberPasswords = "all";
 
 	plugin.passwordQueue = [notePw, notePw];
 	await plugin.unlockNote(files.get("private/a.md"));
@@ -907,7 +907,7 @@ test("with a remembered folder password, a note moved in is locked after a confi
 	const { app, files } = createMockApp({ "private/a.md": "Note A", "inbox/idea.md": "An idea" });
 	const plugin = new TestEnclavePlugin(app);
 	plugin.settings.iterations = 100000;
-	plugin.settings.rememberSeparatePasswords = true;
+	plugin.settings.rememberPasswords = "all";
 	plugin.passwordQueue = [folderPw];
 	await plugin.lockFolder(new TFolder("private"), "note");
 	assert.equal(plugin.prompts, 1);
@@ -924,4 +924,41 @@ test("with a remembered folder password, a note moved in is locked after a confi
 	plugin.passwordQueue = [folderPw];
 	await plugin.unlockNote(files.get("private/idea.md"));
 	assert.equal(files.get("private/idea.md").content, "An idea", "locked with the folder's password");
+});
+
+test("with remembering off, the vault password is asked for every time", async () => {
+	const vaultPw = "vaultPassword123";
+	const { app, files } = createMockApp({ "a.md": "Note A", "b.md": "Note B" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.settings.rememberPasswords = "none";
+
+	plugin.passwordQueue = [vaultPw, vaultPw];
+	await plugin.lockNote(files.get("a.md"), "vault");
+	await plugin.lockNote(files.get("b.md"), "vault");
+	assert.ok(isLocked(files.get("a.md").content));
+	assert.ok(isLocked(files.get("b.md").content));
+	assert.equal(plugin.prompts, 2);
+	assert.equal(plugin.vaultPassword, null);
+
+	// An unlocked note still re-locks on its own, with the password it was opened with.
+	plugin.passwordQueue = [vaultPw];
+	await plugin.unlockNote(files.get("a.md"));
+	await plugin.lockAll(true);
+	assert.ok(isLocked(files.get("a.md").content));
+});
+
+test("the old 'remember separate passwords' toggle carries over", async () => {
+	const { app } = createMockApp({});
+	for (const [old, expected] of [
+		[true, "all"],
+		[false, "vault"],
+		[undefined, "vault"],
+	]) {
+		const plugin = new TestEnclavePlugin(app);
+		plugin.persistedData = { settings: { rememberSeparatePasswords: old }, ledger: [] };
+		await plugin.loadSettings();
+		assert.equal(plugin.settings.rememberPasswords, expected, `toggle ${old}`);
+		assert.equal("rememberSeparatePasswords" in plugin.settings, false);
+	}
 });

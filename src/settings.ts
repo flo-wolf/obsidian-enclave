@@ -11,6 +11,13 @@ export interface ProtectedFolder {
 	check?: EnclavePayload;
 }
 
+/**
+ * Which passwords stay in memory between unlocks: only the vault password (the
+ * default: everyday notes open freely, separate passwords are asked for every
+ * time), every password, or none.
+ */
+export type RememberPasswords = "vault" | "all" | "none";
+
 export interface EnclaveSettings {
 	/** PBKDF2 iteration count used when locking new notes. */
 	iterations: number;
@@ -24,8 +31,8 @@ export interface EnclaveSettings {
 	autoLockMinutes: number;
 	/** Forget remembered passwords after this many minutes unused (0 = until quit). */
 	forgetPasswordMinutes: number;
-	/** Keep separate passwords in memory like the vault password. */
-	rememberSeparatePasswords: boolean;
+	/** Which passwords stay in memory between unlocks. */
+	rememberPasswords: RememberPasswords;
 	/** Verify each note decrypts back to the original before overwriting it. */
 	verifyOnLock: boolean;
 	/** Folders kept locked, set by locking a folder. */
@@ -43,7 +50,7 @@ export const DEFAULT_SETTINGS: EnclaveSettings = {
 	// navigate-away hook never fires) still re-locks as a backstop.
 	autoLockMinutes: 5,
 	forgetPasswordMinutes: 30,
-	rememberSeparatePasswords: false,
+	rememberPasswords: "vault",
 	verifyOnLock: true,
 	protectedFolders: [],
 	vaultCheck: null,
@@ -87,13 +94,22 @@ export class EnclaveSettingTab extends PluginSettingTab {
 						},
 					},
 					{
-						name: "Remember separate passwords",
-						desc: "Keep separate passwords in memory like the vault password, so a note or folder you unlocked recently opens again without asking. They're forgotten together with the vault password and never written to disk.",
-						control: { type: "toggle", key: "rememberSeparatePasswords" },
+						name: "Remember passwords for the session",
+						desc: "Which passwords stay in memory after you've entered them. Vault password only: everyday notes open without asking, and notes with a separate password ask every time. Remembered passwords are never written to disk.",
+						control: {
+							type: "dropdown",
+							key: "rememberPasswords",
+							options: {
+								vault: "Vault password only",
+								all: "Vault and separate passwords",
+								none: "Don't remember",
+							},
+						},
 					},
 					{
 						name: "Forget passwords after",
-						desc: "Minutes the vault password, and remembered separate passwords, stay in memory without being used. After this you'll be asked again. 0 keeps them until Obsidian quits.",
+						desc: "Minutes remembered passwords stay in memory without being used. After this you'll be asked again. 0 keeps them until Obsidian quits.",
+						visible: () => this.plugin.settings.rememberPasswords !== "none",
 						control: {
 							type: "number",
 							key: "forgetPasswordMinutes",
@@ -180,7 +196,12 @@ export class EnclaveSettingTab extends PluginSettingTab {
 	async setControlValue(key: string, value: unknown): Promise<void> {
 		this.plugin.settings = { ...this.plugin.settings, [key]: value };
 		if (key === "hideLockProperties") this.plugin.applyPropertyHiding();
-		if (key === "rememberSeparatePasswords" && !value) this.plugin.forgetSeparatePasswords();
+		if (key === "rememberPasswords") {
+			// A stricter choice forgets what it no longer allows right away.
+			if (value !== "all") this.plugin.forgetSeparatePasswords();
+			if (value === "none") this.plugin.forgetVaultPassword(true);
+			this.update();
+		}
 		await this.plugin.saveSettings();
 	}
 

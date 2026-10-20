@@ -24,7 +24,13 @@ import { buildLockedNote, FENCE_LANG, isLocked, isPayload, parseLockedNote, read
 import { ConfirmModal } from "./ConfirmModal";
 import { PasswordModal, type PasswordPromptOptions } from "./PasswordModal";
 import { lockedCardExtension, lockedNoteReadOnly } from "./editor";
-import { DEFAULT_SETTINGS, type EnclaveSettings, EnclaveSettingTab, type ProtectedFolder } from "./settings";
+import {
+	DEFAULT_SETTINGS,
+	type EnclaveSettings,
+	EnclaveSettingTab,
+	type ProtectedFolder,
+	type RememberPasswords,
+} from "./settings";
 
 const SWEEP_INTERVAL_MS = 30 * 1000;
 
@@ -115,8 +121,8 @@ export default class EnclavePlugin extends Plugin {
 	private protectedBeforeRename: ProtectedFolder[] = [];
 
 	/**
-	 * Separate passwords kept in memory while "Remember separate passwords" is on,
-	 * keyed by noteKey()/folderKey(). Never written to disk.
+	 * Separate passwords kept in memory when the setting remembers them, keyed by
+	 * noteKey()/folderKey(). Never written to disk.
 	 */
 	private separatePasswords = new Map<string, { password: string; usedAt: number }>();
 
@@ -346,6 +352,14 @@ export default class EnclavePlugin extends Plugin {
 			)
 			.map((f) => (isPayload(f.check) ? f : { path: f.path, scope: f.scope }));
 		if (!isPayload(this.settings.vaultCheck)) this.settings.vaultCheck = null;
+		// "Remember separate passwords" (a toggle until 1.2) became rememberPasswords.
+		// Checked on the stored data, since the defaults already filled in a value.
+		const stored = raw?.settings as (Partial<EnclaveSettings> & { rememberSeparatePasswords?: boolean }) | undefined;
+		const settings = this.settings as EnclaveSettings & { rememberSeparatePasswords?: boolean };
+		if (!(["vault", "all", "none"] as (RememberPasswords | undefined)[]).includes(stored?.rememberPasswords)) {
+			settings.rememberPasswords = stored?.rememberSeparatePasswords === true ? "all" : "vault";
+		}
+		delete settings.rememberSeparatePasswords;
 		this.startupLedger = normalizeLedger(raw?.ledger);
 	}
 
@@ -604,7 +618,7 @@ export default class EnclavePlugin extends Plugin {
 				scope === "note"
 					? await this.promptPassword({
 							title: "Lock note with a separate password",
-							description: `"${file.basename}" will need this exact password to unlock. There is no recovery.`,
+							description: `"${file.basename}" will need this exact password to unlock. ${this.separatePasswordHint()} There is no recovery.`,
 							confirm: true,
 							cta: "Lock",
 						})
@@ -775,7 +789,7 @@ export default class EnclavePlugin extends Plugin {
 	}
 
 	/**
-	 * Decrypt a separate-password note. With "Remember separate passwords" on, a
+	 * Decrypt a separate-password note. When separate passwords are remembered, a
 	 * password remembered for the note or its separate-password folder is tried
 	 * first, and one entered here is remembered for the note (and for the folder,
 	 * if it's the folder's password).
@@ -803,7 +817,7 @@ export default class EnclavePlugin extends Plugin {
 		}
 		this.rememberPassword(noteKey(file.path), password);
 		if (
-			this.settings.rememberSeparatePasswords &&
+			this.settings.rememberPasswords === "all" &&
 			separateFolder?.check &&
 			(await passwordMatchesCheck(separateFolder.check, password))
 		) {
@@ -976,7 +990,7 @@ export default class EnclavePlugin extends Plugin {
 			: scope === "note"
 				? await this.promptPassword({
 						title: "Lock with a separate password",
-						description: `All ${work.length} note(s) will need this exact password to unlock. There is no recovery.`,
+						description: `All ${work.length} note(s) will need this exact password to unlock. ${this.separatePasswordHint()} There is no recovery.`,
 						confirm: true,
 						cta: "Lock",
 					})
@@ -1534,7 +1548,11 @@ export default class EnclavePlugin extends Plugin {
 		const password = await this.promptPassword({
 			title: choosing ? "Set vault password" : "Enter vault password",
 			description: choosing
-				? "This password unlocks every note locked with the vault default. It is kept in memory only for this session and never written to disk."
+				? `This password unlocks every note locked with the vault password. ${
+						this.settings.rememberPasswords === "none"
+							? "You'll be asked for it every time you unlock or lock a note."
+							: "Once entered, it's remembered for the session (never written to disk)."
+					} There is no recovery.`
 				: `Enter your vault password to ${confirm ? "lock" : "unlock"} this note.`,
 			confirm: choosing,
 			cta: confirm ? "Lock" : "Unlock",
@@ -1585,9 +1603,9 @@ export default class EnclavePlugin extends Plugin {
 		return entry.password;
 	}
 
-	/** Keep a separate password in memory, if "Remember separate passwords" is on. */
+	/** Keep a separate password in memory, if the setting remembers separate passwords. */
 	private rememberPassword(key: string, password: string): void {
-		if (this.settings.rememberSeparatePasswords) {
+		if (this.settings.rememberPasswords === "all") {
 			this.separatePasswords.set(key, { password, usedAt: this.now() });
 		}
 	}
@@ -1636,9 +1654,18 @@ export default class EnclavePlugin extends Plugin {
 		await this.persist();
 	}
 
+	/** Keep the vault password for the session, unless the setting remembers no passwords. */
 	private cacheVaultPassword(password: string): void {
+		if (this.settings.rememberPasswords === "none") return;
 		this.vaultPassword = password;
 		this.vaultPasswordSetAt = this.now();
+	}
+
+	/** What happens to a separate password after it's entered, for the prompts that set one. */
+	private separatePasswordHint(): string {
+		return this.settings.rememberPasswords === "all"
+			? "Once entered, it's remembered for the session like the vault password."
+			: "You'll be asked for it every time you unlock.";
 	}
 
 	forgetVaultPassword(silent = false): void {
@@ -1720,7 +1747,7 @@ export default class EnclavePlugin extends Plugin {
 		const samples = check ? [] : (await this.separatePayloadsIn(folderPath)).slice(0, 5);
 		const choosing = !check && samples.length === 0;
 		const ask = choosing
-			? `Choose a password for "${folderPath}". Its notes, and notes added to it later, will need it to unlock. There is no recovery.`
+			? `Choose a password for "${folderPath}". Its notes, and notes added to it later, will need it to unlock. ${this.separatePasswordHint()} There is no recovery.`
 			: `Enter the password the notes in "${folderPath}" are locked with.`;
 		const password = await this.promptPassword({
 			title: `Password for "${folderPath}"`,

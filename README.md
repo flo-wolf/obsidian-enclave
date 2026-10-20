@@ -57,13 +57,17 @@ iOS, with the vault.
 
 ### Two kinds of password
 
-- **Vault password**: one password for all your everyday locked notes. You
-  enter it once per session; it is kept in memory only and forgotten after 30
-  minutes (configurable) or when Obsidian quits.
-- **Separate password**: a password for one note, or one group of notes, that
-  should not open with the vault password. By default you enter it every time;
-  turn on **Remember separate passwords** to keep it in memory like the vault
-  password.
+- **Vault password**: one password for all your everyday locked notes, for
+  convenience. You enter it once per session; it's kept in memory and forgotten
+  after 30 minutes unused (configurable) or when Obsidian quits.
+- **Separate password**: a password for one note, or one group of notes, as an
+  extra barrier. It's meant for notes that shouldn't open just because you're
+  already working in Obsidian, so by default you enter it every time.
+
+**Remember passwords for the session** in the settings changes this: **Vault
+password only** (default), **Vault and separate passwords**, or **Don't
+remember**, which asks for every password every time. Remembered passwords are
+never written to disk.
 
 You choose the vault password the first time you lock a note with it. After
 that, a mistyped vault password is rejected right away instead of locking notes
@@ -240,8 +244,8 @@ Enclave's tracking. It will not be locked again unless you lock it yourself.
 | Hide properties of locked notes | On | Hide the properties box on locked notes, which only shows Enclave's own `locked` and `lock-scope` properties. |
 | Lock when Obsidian is hidden | On | Desktop only: re-lock unlocked notes when you minimize Obsidian or switch to another space or full-screen app. On mobile, notes always re-lock when the app goes to the background. |
 | Auto-lock after inactivity | 5 min | Re-lock idle unlocked notes. `0` turns it off. |
-| Remember separate passwords | Off | Keep separate passwords in memory like the vault password, so a note or folder you unlocked recently opens again without asking. Never written to disk. |
-| Forget passwords after | 30 min | How long the vault password, and remembered separate passwords, stay in memory without being used. `0` keeps them until Obsidian quits. |
+| Remember passwords for the session | Vault password only | Which passwords stay in memory after you've entered them: the vault password only, the vault and separate passwords, or none. Never written to disk. |
+| Forget passwords after | 30 min | How long remembered passwords stay in memory without being used. `0` keeps them until Obsidian quits. |
 | Key derivation iterations | 310,000 | PBKDF2 iterations for newly locked notes. Higher is slower to unlock and slower to brute-force. |
 | Verify before overwriting | On | The round-trip check described above. Roughly doubles the time a lock takes. |
 | Vault password | Not set | Whether the vault password has been chosen. **Forget** lets you choose a new one the next time you lock a note; see [Changing the vault password](#changing-the-vault-password). |
