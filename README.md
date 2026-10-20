@@ -232,6 +232,7 @@ Enclave's tracking. It will not be locked again unless you lock it yourself.
 | Setting | Default | |
 |---|---|---|
 | Lock when leaving a note | On | Re-lock a note when you switch to another note. |
+| Hide properties of locked notes | On | Hide the properties box on locked notes, which only shows Enclave's own `locked` and `lock-scope` properties. |
 | Lock when Obsidian is hidden | On | Desktop only: re-lock unlocked notes when you minimize Obsidian or switch to another space or full-screen app. On mobile, notes always re-lock when the app goes to the background. |
 | Auto-lock after inactivity | 5 min | Re-lock idle unlocked notes. `0` turns it off. |
 | Forget vault password after | 30 min | How long the vault password stays in memory. `0` keeps it until Obsidian quits. |

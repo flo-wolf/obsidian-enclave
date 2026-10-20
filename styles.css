@@ -114,3 +114,14 @@
 .enclave-ribbon-warn {
 	color: var(--text-warning, #d9a441);
 }
+
+/* With "Hide properties of locked notes" on, hide the properties box of locked
+   notes: it only holds Enclave's own `locked` and `lock-scope` markers. Both
+   are required, so a plain note with its own `locked` property keeps its box.
+   !important because Obsidian's own rule for showing the box is more specific. */
+body.enclave-hide-lock-properties
+	.metadata-container:has(.metadata-property[data-property-key="locked"]):has(
+		.metadata-property[data-property-key="lock-scope"]
+	) {
+	display: none !important;
+}

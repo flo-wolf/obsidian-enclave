@@ -28,6 +28,9 @@ import { DEFAULT_SETTINGS, type EnclaveSettings, EnclaveSettingTab, type Protect
 
 const SWEEP_INTERVAL_MS = 30 * 1000;
 
+/** Body class that hides the properties box of locked notes (see styles.css). */
+const HIDE_PROPERTIES_CLASS = "enclave-hide-lock-properties";
+
 /** How long to gather notes moved into protected folders before asking once about all of them. */
 const MOVE_BATCH_MS = 500;
 
@@ -117,6 +120,7 @@ export default class EnclavePlugin extends Plugin {
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
+		this.applyPropertyHiding();
 
 		this.addSettingTab(new EnclaveSettingTab(this.app, this));
 
@@ -163,6 +167,12 @@ export default class EnclavePlugin extends Plugin {
 		// session detect and re-secure anything this didn't finish in time.
 		void this.lockAll(true);
 		this.vaultPassword = null;
+		document.body.removeClass(HIDE_PROPERTIES_CLASS);
+	}
+
+	/** Show or hide locked notes' properties box, per the setting (styles.css does the hiding). */
+	applyPropertyHiding(): void {
+		document.body.toggleClass(HIDE_PROPERTIES_CLASS, this.settings.hideLockProperties);
 	}
 
 	private registerCommands(): void {

@@ -18,6 +18,8 @@ export interface EnclaveSettings {
 	autoLockOnClose: boolean;
 	/** Desktop: re-encrypt unlocked notes when Obsidian is minimized or hidden. Mobile always does. */
 	lockWhenHidden: boolean;
+	/** Hide the properties box on locked notes, which only holds Enclave's own markers. */
+	hideLockProperties: boolean;
 	/** Re-encrypt unlocked notes after this many minutes of inactivity (0 = off). */
 	autoLockMinutes: number;
 	/** Forget the cached vault password after this many minutes (0 = until quit). */
@@ -34,6 +36,7 @@ export const DEFAULT_SETTINGS: EnclaveSettings = {
 	iterations: DEFAULT_ITERATIONS,
 	autoLockOnClose: true,
 	lockWhenHidden: true,
+	hideLockProperties: true,
 	// Non-zero by default so a note left open in a background pane (where the
 	// navigate-away hook never fires) still re-locks as a backstop.
 	autoLockMinutes: 5,
@@ -72,6 +75,19 @@ export class EnclaveSettingTab extends PluginSettingTab {
 			.addToggle((toggle) =>
 				toggle.setValue(this.plugin.settings.lockWhenHidden).onChange(async (value) => {
 					this.plugin.settings.lockWhenHidden = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName("Hide properties of locked notes")
+			.setDesc(
+				"Hide the properties box on locked notes. It only shows Enclave's own locked and lock-scope properties; the note's real properties are encrypted with the rest of it."
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.hideLockProperties).onChange(async (value) => {
+					this.plugin.settings.hideLockProperties = value;
+					this.plugin.applyPropertyHiding();
 					await this.plugin.saveSettings();
 				})
 			);
