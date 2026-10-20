@@ -87,9 +87,17 @@ interface BulkDecrypt {
 /** Shape persisted via saveData: settings plus a crash-recovery ledger. */
 interface PersistedData {
 	settings: EnclaveSettings;
-	/** Notes that held plaintext on disk at last write — used to recover after a crash. */
-	ledger: LedgerEntry[];
+	/** Until 1.5.0 the crash-recovery ledger was saved here; it's read once and then dropped. */
+	ledger?: LedgerEntry[];
 }
+
+/**
+ * Where the crash-recovery ledger is kept: Obsidian's localStorage for this vault
+ * on this device. The ledger is about this device's files only, so it mustn't
+ * travel with the vault, where it would change the synced data file on every
+ * unlock and lock (and conflict between devices).
+ */
+const LEDGER_STORAGE_KEY = "enclave-ledger";
 
 export default class EnclavePlugin extends Plugin {
 	settings: EnclaveSettings = { ...DEFAULT_SETTINGS };
@@ -130,6 +138,9 @@ export default class EnclavePlugin extends Plugin {
 	 * noteKey()/folderKey(). Never written to disk.
 	 */
 	private separatePasswords = new Map<string, { password: string; usedAt: number }>();
+
+	/** The settings as last written to the data file, to skip writes that change nothing. */
+	private savedSettings: string | null = null;
 
 	/** Callbacks registered through api.onLocked(). */
 	private lockListeners = new Set<(path: string) => void>();
@@ -422,19 +433,34 @@ export default class EnclavePlugin extends Plugin {
 		if (!(["vault", "all", "none"] as RememberPasswords[]).includes(settings.mobileRememberPasswords)) {
 			settings.mobileRememberPasswords = DEFAULT_SETTINGS.mobileRememberPasswords;
 		}
-		this.startupLedger = normalizeLedger(raw?.ledger);
+		// A ledger still in the data file (saved before 1.5.1) is read once, so an
+		// update right after a crash can't lose track of exposed notes; the next save
+		// leaves it out of the file.
+		const ledger = [
+			...normalizeLedger(this.app.loadLocalStorage(LEDGER_STORAGE_KEY)),
+			...normalizeLedger(raw?.ledger),
+		];
+		this.startupLedger = ledger.filter((entry, i) => ledger.findIndex((other) => other.path === entry.path) === i);
+		this.savedSettings = raw?.ledger ? null : JSON.stringify(this.settings);
 	}
 
 	async saveSettings(): Promise<void> {
 		await this.persist();
 	}
 
+	/**
+	 * Save state: the ledger of notes with plaintext on disk goes to this device's
+	 * localStorage every time; the vault's data file is only written when the
+	 * settings changed, so syncing the vault doesn't pick up a change on every lock.
+	 */
 	private async persist(): Promise<void> {
-		const data: PersistedData = {
-			settings: this.settings,
-			ledger: Array.from(this.unlocked, ([path, info]) => ({ path, scope: info.scope })),
-		};
+		const ledger: LedgerEntry[] = Array.from(this.unlocked, ([path, info]) => ({ path, scope: info.scope }));
+		this.app.saveLocalStorage(LEDGER_STORAGE_KEY, ledger);
+		const settings = JSON.stringify(this.settings);
+		if (settings === this.savedSettings) return;
+		const data: PersistedData = { settings: this.settings };
 		await this.saveData(data);
+		this.savedSettings = settings;
 	}
 
 	// ---- command plumbing ----------------------------------------------

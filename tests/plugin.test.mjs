@@ -52,7 +52,7 @@ class TestEnclavePlugin extends EnclavePlugin {
 	}
 
 	getLedger() {
-		return this.persistedData?.ledger ?? [];
+		return this.app.loadLocalStorage("enclave-ledger") ?? [];
 	}
 
 	triggerSweep() {
@@ -90,6 +90,15 @@ function createMockApp(filesMap) {
 			getLeavesOfType: () => [],
 			on: () => ({}),
 			onLayoutReady: (cb) => cb(),
+		},
+		// Obsidian's per-vault, per-device localStorage.
+		localStorage: new Map(),
+		loadLocalStorage(key) {
+			return this.localStorage.has(key) ? this.localStorage.get(key) : null;
+		},
+		saveLocalStorage(key, data) {
+			if (data === null) this.localStorage.delete(key);
+			else this.localStorage.set(key, structuredClone(data));
 		},
 	};
 	return { app, files };
@@ -1229,4 +1238,41 @@ test("a merge session uses passwords Enclave already has, without asking", async
 	assert.deepEqual(session.texts, ["Note A", "Note A from elsewhere"]);
 	assert.equal(session.sameLock, true);
 	session.close();
+});
+
+test("the crash-recovery ledger stays on the device, out of the synced data file", async () => {
+	const vaultPw = "vaultPassword123";
+	const { app, files } = createMockApp({
+		"a.md": buildLockedNote(await encryptContent("Note A", vaultPw, "vault", 100000)),
+	});
+	const plugin = new TestEnclavePlugin(app);
+	plugin.settings.iterations = 100000;
+	plugin.passwordQueue = [vaultPw];
+	let writes = 0;
+	const saveData = plugin.saveData.bind(plugin);
+	plugin.saveData = async (data) => {
+		writes++;
+		await saveData(data);
+	};
+
+	await plugin.unlockNote(files.get("a.md"));
+	assert.deepEqual(plugin.getLedger(), [{ path: "a.md", scope: "vault" }]);
+	assert.equal("ledger" in plugin.persistedData, false, "the data file has no ledger");
+	const writesAfterUnlock = writes;
+
+	await plugin.lockAll(true);
+	assert.deepEqual(plugin.getLedger(), []);
+	assert.equal(writes, writesAfterUnlock, "locking changed no setting, so the data file wasn't rewritten");
+});
+
+test("a ledger left in the data file by an older version is still recovered", async () => {
+	const { app } = createMockApp({ "a.md": "Plain text left by a crash" });
+	const plugin = new TestEnclavePlugin(app);
+	plugin.persistedData = { settings: {}, ledger: [{ path: "a.md", scope: "vault" }] };
+
+	await plugin.loadSettings();
+	await plugin.recoverExposedNotes();
+
+	assert.equal(await plugin.api.holdReason("a.md"), "exposed");
+	assert.equal("ledger" in plugin.persistedData, false, "the next save drops it from the data file");
 });
