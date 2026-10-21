@@ -1,0 +1,2 @@
+- A new, shorter README about what Enclave does for you, with all the details in the [Enclave guide](https://github.com/flo-wolf/obsidian-enclave/blob/main/docs/guide.md).
+- Meet [Envoy](https://github.com/flo-wolf/obsidian-envoy): sync your vault across iPhone, Android, Mac, Windows and Linux through your own private GitLab project. With Enclave, your locked notes only ever leave your device encrypted.

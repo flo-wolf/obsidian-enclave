@@ -58,5 +58,5 @@ jobs:
         run: |
           gh release create "$tag" \
             --title="$tag" \
-            --notes "Release $tag. See the changelog in README.md." \
+            --notes-file .github/release-notes.md \
             main.js manifest.json styles.css
